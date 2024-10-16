@@ -27,8 +27,8 @@ set(LLGL_WASM_PLATFORM OFF)
 if(NOT DEFINED LLGL_TARGET_PLATFORM)
     if("${CMAKE_SYSTEM_NAME}" STREQUAL "Android")
         set(LLGL_TARGET_PLATFORM "Android")
-        if(NOT DEFINED ENV{ANDROID_NDK_ROOT})
-            message(FATAL_ERROR "Cannot build for Android platform: Missing environment variable 'ANDROID_NDK_ROOT'")
+        if(NOT DEFINED ANDROID_NDK_ROOT)
+            message(FATAL_ERROR "Cannot build for Android platform: Missing variable 'ANDROID_NDK_ROOT'")
         endif()
         set(LLGL_ANDROID_PLATFORM ON)
     elseif("${CMAKE_SYSTEM_NAME}" STREQUAL "WindowsStore")
@@ -586,7 +586,7 @@ else()
 endif()
 
 if(LLGL_ANDROID_PLATFORM)
-    set(ANDROID_APP_GLUE_DIR "$ENV{ANDROID_NDK_ROOT}/sources/android/native_app_glue")
+    set(ANDROID_APP_GLUE_DIR "${ANDROID_NDK_ROOT}/sources/android/native_app_glue")
     set(
         FilesAndroidNativeAppGlue
         "${ANDROID_APP_GLUE_DIR}/android_native_app_glue.c"
