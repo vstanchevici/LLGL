@@ -7,7 +7,7 @@
 
 # Originally authored on 09/07/2015
 
-cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 
 project(LLGL)
 
