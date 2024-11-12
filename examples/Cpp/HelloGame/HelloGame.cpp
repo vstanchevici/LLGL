@@ -910,13 +910,14 @@ private:
             groundShaders.vs = LoadShader({ LLGL::ShaderType::Vertex,   "HelloGame.VSGround.450core.vert.spv" }, { vertexFormat });
             groundShaders.ps = LoadShader({ LLGL::ShaderType::Fragment, "HelloGame.PSGround.450core.frag.spv" });
         }
-#if 0
         else if (Supported(LLGL::ShadingLanguage::Metal))
         {
-            sceneShaders.vs = LoadShader({ LLGL::ShaderType::Vertex,     "HelloGame.metal", "VSInstance", "vs_5_0" }, { vertexFormat });
-            sceneShaders.ps = LoadShader({ LLGL::ShaderType::Fragment,   "HelloGame.metal", "PSInstance", "ps_5_0" });
+            sceneShaders.vs  = LoadShader({ LLGL::ShaderType::Vertex,   "HelloGame.hlsl", "VSInstance", "1.1" }, { vertexFormat });
+            sceneShaders.ps  = LoadShader({ LLGL::ShaderType::Fragment, "HelloGame.hlsl", "PSInstance", "1.1" });
+
+            groundShaders.vs = LoadShader({ LLGL::ShaderType::Vertex,   "HelloGame.hlsl", "VSGround",   "1.1" }, { vertexFormat });
+            groundShaders.ps = LoadShader({ LLGL::ShaderType::Fragment, "HelloGame.hlsl", "PSGround",   "1.1" });
         }
-#endif
         else
         {
             throw std::runtime_error("No shaders provided for this backend");
@@ -933,13 +934,13 @@ private:
             LLGL::Parse(
                 "cbuffer(Scene@1):vert:frag,"
                 "%s(instances@2):vert,"
-                "texture(shadowMap@3):frag,"
+                "texture(shadowMap@4):frag,"
                 "sampler(shadowMapSampler@%d):frag,"
                 "float3(worldOffset),"  // Uniform_worldOffset   (0)
                 "float(bendIntensity)," // Uniform_bendIntensity (1)
                 "uint(firstInstance),", // Uniform_firstInstance (2)
                 (instanceBuffer.IsCbuffer() ? "cbuffer" : "buffer"),
-                (needsUniqueBindingSlots ? 4 : 3)
+                (needsUniqueBindingSlots ? 5 : 4)
             )
         );
 
@@ -1022,16 +1023,6 @@ private:
         return Gs::Vector3f{ posX, posY, posZ };
     }
 
-    static void RotateAroundPivot(InstanceMatrixType& outMatrix, const Gs::Vector3f& pivot, const Gs::Vector3f& axis, float angle)
-    {
-        Gs::Matrix3f rotation;
-        Gs::RotateFree(rotation, axis, angle);
-        const Gs::Vector3f offset = rotation * pivot;
-
-        Gs::Translate(outMatrix, pivot - offset);
-        Gs::RotateFree(outMatrix, axis, angle);
-    }
-
     void SetPlayerTransform(InstanceMatrixType& outMatrix, const int (&gridPos)[2], int moveX, int moveZ, float posY, float transition)
     {
         outMatrix.LoadIdentity();
@@ -1057,22 +1048,22 @@ private:
             if (moveX < 0)
             {
                 // Move left
-                RotateAroundPivot(outMatrix, Gs::Vector3f{ -1,-1, 0 }, Gs::Vector3f{ 0,0,1 }, -angle);
+                Gs::RotateFree(outMatrix, Gs::Vector3f{ 0,0,1 }, -angle, Gs::Vector3f{ -1,-1, 0 });
             }
             else if (moveX > 0)
             {
                 // Move right
-                RotateAroundPivot(outMatrix, Gs::Vector3f{ +1,-1, 0 }, Gs::Vector3f{ 0,0,1 }, +angle);
+                Gs::RotateFree(outMatrix, Gs::Vector3f{ 0,0,1 }, +angle, Gs::Vector3f{ +1,-1, 0 });
             }
             else if (moveZ < 0)
             {
                 // Move forwards
-                RotateAroundPivot(outMatrix, Gs::Vector3f{  0,-1,-1 }, Gs::Vector3f{ 1,0,0 }, +angle);
+                Gs::RotateFree(outMatrix, Gs::Vector3f{ 1,0,0 }, +angle, Gs::Vector3f{  0,-1,-1 });
             }
             else if (moveZ > 0)
             {
                 // Move backwards
-                RotateAroundPivot(outMatrix, Gs::Vector3f{  0,-1,+1 }, Gs::Vector3f{ 1,0,0 }, -angle);
+                Gs::RotateFree(outMatrix, Gs::Vector3f{ 1,0,0 }, -angle, Gs::Vector3f{  0,-1,+1 });
             }
         }
     }
