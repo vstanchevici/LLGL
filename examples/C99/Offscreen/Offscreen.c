@@ -61,7 +61,7 @@ float LerpColorWheel(float t, int component)
 int ExampleInit()
 {
     // Register standard output as log callback
-    llglRegisterLogCallbackStd();
+    llglRegisterLogCallbackStd(0);
 
     // Load render system module
     LLGLReport report = {};
@@ -258,8 +258,7 @@ int ExampleInit()
     // Create command buffer to submit subsequent graphics commands to the GPU
     LLGLCommandBufferDescriptor cmdBufferDesc =
     {
-        .flags              = LLGLCommandBufferImmediateSubmit,
-        .numNativeBuffers   = 2,
+        .flags = LLGLCommandBufferImmediateSubmit,
     };
     LLGLCommandBuffer cmdBuffer = llglCreateCommandBuffer(&cmdBufferDesc);
 

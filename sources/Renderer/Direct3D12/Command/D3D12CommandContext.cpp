@@ -15,6 +15,7 @@
 #include "../../CheckedCast.h"
 #include "../../DXCommon/DXCore.h"
 #include "../../../Core/Assertion.h"
+#include "../../../Core/CoreUtils.h"
 #include <LLGL/Utils/ForRange.h>
 #include <algorithm>
 #include <limits.h>
@@ -58,7 +59,8 @@ void D3D12CommandContext::Create(
     allocatorFence_.Create(device.GetNative());
 
     /* Determine number of command allocators */
-    numAllocators_ = std::max(1u, std::min(numAllocators, D3D12CommandContext::maxNumAllocators));
+    constexpr UINT numAllocatorsDefault = 2;
+    numAllocators_ = (numAllocators == 0 ? numAllocatorsDefault : Clamp<UINT>(numAllocators, 1u, D3D12CommandContext::maxNumAllocators));
 
     /* Create command allocators and descriptor heap pools */
     constexpr UINT64 minStagingChunkSize = 256;
@@ -396,9 +398,7 @@ void D3D12CommandContext::SetDescriptorHeapsOfOtherContext(const D3D12CommandCon
         SetDescriptorHeaps(other.stateCache_.numDescriptorHeaps, other.stateCache_.descriptorHeaps);
 }
 
-void D3D12CommandContext::PrepareStagingDescriptorHeaps(
-    const D3D12DescriptorHeapSetLayout& layout,
-    const D3D12RootParameterIndices&    indices)
+void D3D12CommandContext::SetStagingDescriptorHeaps(const D3D12DescriptorHeapSetLayout& layout, const D3D12RootParameterIndices& indices)
 {
     stagingDescriptorSetLayout_ = layout;
     stagingDescriptorIndices_   = indices;
@@ -422,6 +422,12 @@ void D3D12CommandContext::PrepareStagingDescriptorHeaps(
             stagingDescriptorSetLayout_.numSamplers
         );
     }
+}
+
+void D3D12CommandContext::GetStagingDescriptorHeaps(D3D12DescriptorHeapSetLayout& outLayout, D3D12RootParameterIndices& outIndices)
+{
+    outLayout   = stagingDescriptorSetLayout_;
+    outIndices  = stagingDescriptorIndices_;
 }
 
 void D3D12CommandContext::SetGraphicsConstant(UINT parameterIndex, D3D12Constant value, UINT offset)
