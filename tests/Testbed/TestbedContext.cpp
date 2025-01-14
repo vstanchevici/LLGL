@@ -248,7 +248,7 @@ static void PrintColoredResult(TestResult result, const char* prefix = " ", cons
     else if (result == TestResult::Skipped)
         Log::Printf(Log::ColorFlags::White, "[ %s ]", TestResultToStr(result));
     else
-        Log::Printf(Log::ColorFlags::Red | Log::ColorFlags::Bold, "[ %s ]", TestResultToStr(result));
+        Log::Printf(Log::ColorFlags::StdError, "[ %s ]", TestResultToStr(result));
 
     if (suffix != nullptr)
         Log::Printf(suffix);
@@ -305,9 +305,9 @@ static void PrintTestSummary(unsigned failures)
     if (failures == 0)
         Log::Printf(Log::ColorFlags::BrightGreen, " ==> ALL TESTS PASSED\n");
     else if (failures == 1)
-        Log::Errorf(Log::ColorFlags::Red | Log::ColorFlags::Bold, " ==> 1 TEST FAILED\n");
+        Log::Errorf(Log::ColorFlags::StdError, " ==> 1 TEST FAILED\n");
     else if (failures > 1)
-        Log::Errorf(Log::ColorFlags::Red | Log::ColorFlags::Bold, " ==> %u TESTS FAILED\n", failures);
+        Log::Errorf(Log::ColorFlags::StdError, " ==> %u TESTS FAILED\n", failures);
 }
 
 unsigned TestbedContext::RunAllTests()
@@ -315,7 +315,7 @@ unsigned TestbedContext::RunAllTests()
     // Loading failed if there are already failures
     if (failures > 0)
     {
-        Log::Errorf(Log::ColorFlags::Red | Log::ColorFlags::Bold, " ==> LOADING FAILED\n", failures);
+        Log::Errorf(Log::ColorFlags::StdError, " ==> LOADING FAILED\n", failures);
         return failures;
     }
 
@@ -340,6 +340,7 @@ unsigned TestbedContext::RunAllTests()
     RUN_TEST( CommandBufferEncode         );
 
     // Run all resource tests
+    RUN_TEST( NativeHandle                );
     RUN_TEST( BufferWriteAndRead          );
     RUN_TEST( BufferMap                   );
     RUN_TEST( BufferFill                  );
@@ -356,6 +357,7 @@ unsigned TestbedContext::RunAllTests()
     RUN_TEST( MipMaps                     );
     RUN_TEST( PipelineCaching             );
     RUN_TEST( ShaderErrors                );
+    RUN_TEST( SamplerBuffer               );
 
     // Run all rendering tests
     RUN_TEST( DepthBuffer                 );
@@ -363,7 +365,7 @@ unsigned TestbedContext::RunAllTests()
     RUN_TEST( SceneUpdate                 );
     RUN_TEST( BlendStates                 );
     RUN_TEST( DualSourceBlending          );
-    RUN_TEST( CommandBufferMultiThreading );
+    //RUN_TEST( CommandBufferMultiThreading ); //TODO: this must be rewritten as CommandBuffer constraints are violated in this test
     RUN_TEST( CommandBufferSecondary      );
     RUN_TEST( TriangleStripCutOff         );
     RUN_TEST( TextureViews                );
@@ -374,9 +376,10 @@ unsigned TestbedContext::RunAllTests()
     RUN_TEST( ResourceArrays              );
     RUN_TEST( StreamOutput                );
     RUN_TEST( ResourceCopy                );
+    RUN_TEST( CombinedTexSamplers         );
 
     // Reset main renderer and run C99 tests
-    // LLGL can't run the same render system in multiple instances (confused the context management in GL backend)
+    // LLGL can't run the same render system in multiple instances (confuses the context managemenr in GL backend)
     renderer.reset();
     RUN_C99_TEST( OffscreenC99 );
 
@@ -418,6 +421,7 @@ unsigned TestbedContext::RunRendererIndependentTests(int argc, char* argv[])
     RUN_TEST( ContainerDynamicArray );
     RUN_TEST( ContainerSmallVector );
     RUN_TEST( ContainerUTF8String );
+    RUN_TEST( ContainerStringLiteral );
     RUN_TEST( ParseUtil );
     RUN_TEST( ImageConversions );
 
@@ -756,6 +760,37 @@ TestResult TestbedContext::CreateGraphicsPSO(
     return result;
 }
 
+TestResult TestbedContext::CreateComputePSO(
+    const LLGL::ComputePipelineDescriptor& desc,
+    const char*                             name,
+    LLGL::PipelineState**                   output)
+{
+    TestResult result = TestResult::Passed;
+
+    // Create compute PSO
+    PipelineState* pso = renderer->CreatePipelineState(desc);
+
+    // Check for PSO compilation errors
+    if (const Report* report = pso->GetReport())
+    {
+        if (report->HasErrors())
+        {
+            if (name == nullptr)
+                name = (desc.debugName != nullptr ? desc.debugName : "<unnamed>");
+            Log::Errorf("Error while compiling compute PSO \"%s\":\n%s", name, report->GetText());
+            result = TestResult::FailedErrors;
+        }
+    }
+
+    // Return PSO to output or delete right away if no longer needed
+    if (output != nullptr)
+        *output = pso;
+    else
+        renderer->Release(*pso);
+
+    return result;
+}
+
 bool TestbedContext::HasCombinedSamplers() const
 {
     return (renderer->GetRendererID() == RendererID::OpenGL);
@@ -911,6 +946,9 @@ bool TestbedContext::LoadShaders()
         shaders[DSStreamOutputXfb]  = shaders[DSStreamOutput];
         shaders[GSStreamOutputXfb]  = LoadShaderFromFile("StreamOutput.hlsl",          ShaderType::Geometry,        "GSMain",  "gs_5_0", nullptr, VertFmtColored, VertFmtColoredSO);
         shaders[PSStreamOutput]     = LoadShaderFromFile("StreamOutput.hlsl",          ShaderType::Fragment,        "PSMain",  "ps_5_0", nullptr, VertFmtColored, VertFmtColoredSO);
+        shaders[VSCombinedSamplers] = LoadShaderFromFile("CombinedSamplers.hlsl",      ShaderType::Vertex,          "VSMain",  "vs_5_0");
+        shaders[PSCombinedSamplers] = LoadShaderFromFile("CombinedSamplers.hlsl",      ShaderType::Fragment,        "PSMain",  "ps_5_0");
+        shaders[CSSamplerBuffer]    = LoadShaderFromFile("SamplerBuffer.hlsl",         ShaderType::Compute,         "CSMain",  "cs_5_0");
     }
     else if (IsShadingLanguageSupported(ShadingLanguage::GLSL))
     {
@@ -942,19 +980,22 @@ bool TestbedContext::LoadShaders()
             shaders[VSResourceBinding]  = LoadShaderFromFile("ResourceBinding.450core.vert",   ShaderType::Vertex,   nullptr, nullptr, nullptr, VertFmtEmpty);
             shaders[PSResourceBinding]  = LoadShaderFromFile("ResourceBinding.450core.frag",   ShaderType::Fragment);
             shaders[CSResourceBinding]  = LoadShaderFromFile("ResourceBinding.450core.comp",   ShaderType::Compute);
+            shaders[CSSamplerBuffer]    = LoadShaderFromFile("SamplerBuffer.450core.comp",     ShaderType::Compute);
         }
         shaders[VSClear]            = LoadShaderFromFile("ClearScreen.330core.vert",           ShaderType::Vertex,   nullptr, nullptr, nullptr, VertFmtEmpty);
         shaders[PSClear]            = LoadShaderFromFile("ClearScreen.330core.frag",           ShaderType::Fragment);
         if (IsShadingLanguageSupported(ShadingLanguage::GLSL_410))
         {
-            shaders[VSStreamOutput]     = LoadShaderFromFile("StreamOutput.410core.vert",          ShaderType::Vertex,          nullptr, nullptr, nullptr, VertFmtColored, VertFmtColoredSO);
+            shaders[VSStreamOutput]     = LoadShaderFromFile("StreamOutput.410core.vert",      ShaderType::Vertex,          nullptr, nullptr, nullptr, VertFmtColored, VertFmtColoredSO);
             shaders[VSStreamOutputXfb]  = shaders[VSStreamOutput];
-            shaders[HSStreamOutput]     = LoadShaderFromFile("StreamOutput.410core.tesc",          ShaderType::TessControl);
-            shaders[DSStreamOutput]     = LoadShaderFromFile("StreamOutput.410core.tese",          ShaderType::TessEvaluation,  nullptr, nullptr, nullptr, VertFmtColored, VertFmtColoredSO);
+            shaders[HSStreamOutput]     = LoadShaderFromFile("StreamOutput.410core.tesc",      ShaderType::TessControl);
+            shaders[DSStreamOutput]     = LoadShaderFromFile("StreamOutput.410core.tese",      ShaderType::TessEvaluation,  nullptr, nullptr, nullptr, VertFmtColored, VertFmtColoredSO);
             shaders[DSStreamOutputXfb]  = shaders[DSStreamOutput];
-            shaders[GSStreamOutputXfb]  = LoadShaderFromFile("StreamOutput.410core.geom",          ShaderType::Geometry,        nullptr, nullptr, nullptr, VertFmtColored, VertFmtColoredSO);
-            shaders[PSStreamOutput]     = LoadShaderFromFile("StreamOutput.410core.frag",          ShaderType::Fragment,        nullptr, nullptr, nullptr, VertFmtColored, VertFmtColoredSO);
+            shaders[GSStreamOutputXfb]  = LoadShaderFromFile("StreamOutput.410core.geom",      ShaderType::Geometry,        nullptr, nullptr, nullptr, VertFmtColored, VertFmtColoredSO);
+            shaders[PSStreamOutput]     = LoadShaderFromFile("StreamOutput.410core.frag",      ShaderType::Fragment,        nullptr, nullptr, nullptr, VertFmtColored, VertFmtColoredSO);
         }
+        shaders[VSCombinedSamplers] = LoadShaderFromFile("CombinedSamplers.330core.vert",      ShaderType::Vertex);
+        shaders[PSCombinedSamplers] = LoadShaderFromFile("CombinedSamplers.330core.frag",      ShaderType::Fragment);
     }
     else if (IsShadingLanguageSupported(ShadingLanguage::Metal))
     {

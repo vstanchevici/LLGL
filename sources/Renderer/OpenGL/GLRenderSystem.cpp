@@ -165,6 +165,13 @@ Buffer* GLRenderSystem::CreateBuffer(const BufferDescriptor& bufferDesc, const v
     if ((bufferDesc.bindFlags & BindFlags::IndexBuffer) != 0 && bufferDesc.format != Format::Undefined)
         bufferGL->SetIndexType(bufferDesc.format);
 
+    /* If this buffer could be used a 'samplerBuffer' in GLSL, create its proxy texture */
+    if ((bufferDesc.bindFlags & (BindFlags::Sampled | BindFlags::Storage)) != 0 && bufferDesc.format != Format::Undefined)
+    {
+        GLenum internalFormat = GLTypes::Map(bufferDesc.format);
+        bufferGL->CreateTexBuffer(internalFormat);
+    }
+
     return bufferGL;
 }
 
@@ -670,7 +677,7 @@ static void GLQueryRendererInfo(RendererInfo& info)
     info.shadingLanguageName    = GLProfile::GetShadingLanguageName() + std::string(" ") + GLGetString(GL_SHADING_LANGUAGE_VERSION);
 
     const std::set<const char*>& extensionNames = GetLoadedOpenGLExtensions();
-    info.extensionNames = std::vector<std::string>(extensionNames.begin(), extensionNames.end());
+    info.extensionNames = std::vector<UTF8String>(extensionNames.begin(), extensionNames.end());
 
     GLQueryPipelineCacheID(info.pipelineCacheID);
 }

@@ -24,6 +24,15 @@ set(
     ${FilesTestbedUnitTests}
 )
 
+if(APPLE)
+    # Compile certain C++ files as objective-C++ to include Obj-C specific headers such as <Cocoa/Cocoa.h>
+    set(
+        FilesCppAsObjC
+        "${TEST_PROJECTS_DIR}/Testbed/UnitTests/TestNativeHandle.cpp"
+    )
+    set_source_files_properties("${FilesCppAsObjC}" PROPERTIES COMPILE_FLAGS "-x objective-c++")
+endif()
+
 
 # === Source group folders ===
 
@@ -34,6 +43,28 @@ source_group("Testbed\\UnitTests"   FILES ${FilesTestbedUnitTests})
 # === Include directories ===
 
 include_directories("${TEST_PROJECTS_DIR}/Testbed")
+
+# These include directories are needed for the NativeHandle test: <vulkan/vulkan.h>, <GL/wglext.h>
+if(LLGL_BUILD_STATIC_LIB)
+    if (LLGL_BUILD_RENDERER_VULKAN)
+        find_package(Vulkan)
+        if(Vulkan_FOUND)
+            include_directories(${Vulkan_INCLUDE_DIR})
+        endif()
+        ADD_DEFINE(LLGL_TESTBED_INCLUDE_VULKAN)
+    endif()
+
+    if(LLGL_BUILD_RENDERER_OPENGL)
+        find_package(OpenGL)
+        if(OPENGL_FOUND)
+            include_directories(${OPENGL_INCLUDE_DIR})
+            if(WIN32)
+                include_directories("${EXTERNAL_INCLUDE_DIR}/OpenGL/include")
+            endif()
+            ADD_DEFINE(LLGL_TESTBED_INCLUDE_OPENGL)
+        endif()
+    endif()
+endif()
 
 
 # === Projects ===

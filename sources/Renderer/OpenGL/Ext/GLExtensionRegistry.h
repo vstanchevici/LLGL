@@ -69,6 +69,8 @@ enum class GLExt
     ARB_shader_storage_buffer_object,   // GL 4.2
     ARB_sync,
     ARB_tessellation_shader,            // GL 3.2
+    ARB_texture_buffer_object,          // GL 3.1
+    ARB_texture_buffer_range,           // GL 4.3
     ARB_texture_compression,
     ARB_texture_cube_map,               // no procedures
     ARB_texture_cube_map_array,         // no procedures
@@ -127,6 +129,11 @@ enum class GLExt
 
 // Registers the specified OpenGL extension support.
 void RegisterExtension(GLExt extension);
+
+// Disables GL extensions that are incompatible with other unsupported extensions.
+// For example, if GL_ARB_texture_storage is not supported, GL_ARB_direct_state_access cannot be supported either.
+// Such mismatches can occurr when individual extensions are disbaled either for debugging purposes or due to other external input.
+void DisableIncompatibleExtensions();
 
 // Returns true if the specified OpenGL extension is supported.
 bool HasExtension(const GLExt extension);

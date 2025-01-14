@@ -48,6 +48,11 @@ void DbgRenderSystem::FlushProfile()
     profile_ = {};
 }
 
+bool DbgRenderSystem::IsVulkan() const
+{
+    return (GetRendererID() == RendererID::Vulkan);
+}
+
 /* ----- Swap-chain ----- */
 
 SwapChain* DbgRenderSystem::CreateSwapChain(const SwapChainDescriptor& swapChainDesc, const std::shared_ptr<Surface>& surface)
@@ -737,7 +742,7 @@ void DbgRenderSystem::ValidateBufferDesc(const BufferDescriptor& bufferDesc, std
             if (const char* formatName = ToString(bufferDesc.format))
                 LLGL_DBG_ERROR(ErrorType::InvalidArgument, "invalid index buffer format: LLGL::Format::%s", formatName);
             else
-                LLGL_DBG_ERROR(ErrorType::InvalidArgument, "unknown index buffer format: %s", IntToHex(static_cast<std::uint32_t>(bufferDesc.format)));
+                LLGL_DBG_ERROR(ErrorType::InvalidArgument, "unknown index buffer format: 0x%08X", static_cast<unsigned>(bufferDesc.format));
         }
 
         /* Validate buffer size for specified index format, unless it's also used for as vertex buffer  */
@@ -1440,7 +1445,7 @@ static std::string GetBindingDescLabel(const BindingDescriptor& bindingDesc)
     if (!bindingDesc.name.empty())
     {
         label += '\"';
-        label += bindingDesc.name;
+        label += bindingDesc.name.c_str();
         label += "\" ";
     }
     label += "at ";
@@ -1563,7 +1568,7 @@ void DbgRenderSystem::ValidateShaderDesc(const ShaderDescriptor& shaderDesc)
                 LLGL_DBG_ERROR(
                     ErrorType::InvalidArgument,
                     "%s uses unknown system-value (0x%08X)",
-                    attribLabel.c_str(), static_cast<int>(attrib.systemValue)
+                    attribLabel.c_str(), static_cast<unsigned>(attrib.systemValue)
                 );
             }
         }
@@ -1943,6 +1948,8 @@ void DbgRenderSystem::ValidateGraphicsPipelineDesc(const GraphicsPipelineDescrip
 
     SmallVector<DbgShader*, 5> shadersDbg;
 
+    bool hasShadersWithFailedReflection = false;
+
     for (ShaderTypePair pair : { ShaderTypePair{ pipelineStateDesc.vertexShader,         ShaderType::Vertex         },
                                  ShaderTypePair{ pipelineStateDesc.tessControlShader,    ShaderType::TessControl    },
                                  ShaderTypePair{ pipelineStateDesc.tessEvaluationShader, ShaderType::TessEvaluation },
@@ -1952,6 +1959,9 @@ void DbgRenderSystem::ValidateGraphicsPipelineDesc(const GraphicsPipelineDescrip
         if (Shader* shader = pair.shader)
         {
             auto* shaderDbg = LLGL_CAST(DbgShader*, shader);
+
+            if (shaderDbg->HasReflectionFailed())
+                hasShadersWithFailedReflection = true;
 
             const bool isSeparableShaders = ((shaderDbg->desc.flags & ShaderCompileFlags::SeparateShader) != 0);
             if (isSeparableShaders && !hasSeparableShaders)
@@ -1992,7 +2002,26 @@ void DbgRenderSystem::ValidateGraphicsPipelineDesc(const GraphicsPipelineDescrip
     ValidateBlendDescriptor(pipelineStateDesc.blend, hasFragmentShader, hasDualSourceBlend);
 
     if (const DbgPipelineLayout* pipelineLayoutDbg = DbgGetWrapper<DbgPipelineLayout>(pipelineStateDesc.pipelineLayout))
-        ValidatePipelineStateUniforms(*pipelineLayoutDbg, shadersDbg);
+    {
+        ValidatePipelineStateUniforms(*pipelineLayoutDbg, shadersDbg, pipelineStateDesc.debugName);
+
+        /* If shader reflection failed, report error if PSO layout requires it (Vulkan specific) */
+        if (hasShadersWithFailedReflection && IsVulkan())
+        {
+            if (!pipelineLayoutDbg->desc.bindings.empty() &&
+                !pipelineLayoutDbg->desc.heapBindings.empty())
+            {
+                const char* psoDebugName = pipelineStateDesc.debugName;
+                const std::string psoLabel = (psoDebugName != nullptr && *psoDebugName != '\0' ? " '" + std::string(psoDebugName) + '\'' : "");
+                LLGL_DBG_ERROR(
+                    ErrorType::UndefinedBehavior,
+                    "failed to reflect shader code in PSO%s with mix of heap- and individual bindings; "
+                    "perhaps LLGL was built without LLGL_VK_ENABLE_SPIRV_REFLECT",
+                    psoLabel.c_str()
+                );
+            }
+        }
+    }
 }
 
 void DbgRenderSystem::ValidateComputePipelineDesc(const ComputePipelineDescriptor& pipelineStateDesc)
@@ -2176,7 +2205,7 @@ static ShaderType StageFlagsToShaderType(long stageFlags)
     }
 }
 
-void DbgRenderSystem::ValidatePipelineStateUniforms(const DbgPipelineLayout& pipelineLayout, const ArrayView<DbgShader*>& shaders)
+void DbgRenderSystem::ValidatePipelineStateUniforms(const DbgPipelineLayout& pipelineLayout, const ArrayView<DbgShader*>& shaders, const char* psoDebugName)
 {
     /*
     Warn if any uniform is in a cbuffer that has different binding slots across multiple shader stages,
@@ -2187,7 +2216,7 @@ void DbgRenderSystem::ValidatePipelineStateUniforms(const DbgPipelineLayout& pip
 
     std::vector<ShaderReflection> reflections;
 
-    auto FindResourceInPreviousReflectionsByName = [&reflections](const std::string& name) -> const ShaderResourceReflection*
+    auto FindResourceInPreviousReflectionsByName = [&reflections](const LLGL::StringLiteral& name) -> const ShaderResourceReflection*
     {
         for (const ShaderReflection& otherReflection : reflections)
         {
@@ -2203,11 +2232,29 @@ void DbgRenderSystem::ValidatePipelineStateUniforms(const DbgPipelineLayout& pip
         return nullptr;
     };
 
+    std::set<std::string> reflectedUniformNames;
+    const std::string psoLabel = (psoDebugName != nullptr && *psoDebugName != '\0' ? " '" + std::string(psoDebugName) + '\'' : "");
+
     for (DbgShader* shader : shaders)
     {
         /* Reflect shader code */
         ShaderReflection reflection;
-        shader->instance.Reflect(reflection);
+        if (shader->instance.Reflect(reflection))
+        {
+            /* Insert reflected uniform names to match against names for all stages */
+            for (const UniformDescriptor& unfiromDesc : reflection.uniforms)
+                reflectedUniformNames.insert(unfiromDesc.name.c_str());
+        }
+        else
+        {
+            LLGL_DBG_ERROR(
+                ErrorType::InvalidState,
+                "failed to reflect shader code in PSO%s with uniform descriptors%s",
+                psoLabel.c_str(),
+                (IsVulkan() ? "; perhaps LLGL was built without LLGL_VK_ENABLE_SPIRV_REFLECT" : "")
+            );
+            continue;
+        }
 
         /* Check mismatch between shader resources */
         if (!reflections.empty())
@@ -2250,6 +2297,21 @@ void DbgRenderSystem::ValidatePipelineStateUniforms(const DbgPipelineLayout& pip
 
         /* Append new reflection to list for comparison with other shaders */
         reflections.push_back(std::move(reflection));
+    }
+
+    /* Ensure all requested uniforms are included in the code reflection */
+    for (const UniformDescriptor& uniformDesc : pipelineLayout.desc.uniforms)
+    {
+        if (reflectedUniformNames.find(uniformDesc.name.c_str()) == reflectedUniformNames.end())
+        {
+            LLGL_DBG_ERROR(
+                ErrorType::InvalidState,
+                "uniform descriptor '%s' was not found in shader code reflection in PSO%s%s",
+                uniformDesc.name.c_str(),
+                psoLabel.c_str(),
+                (IsVulkan() ? "; perhaps LLGL was built without LLGL_VK_ENABLE_SPIRV_REFLECT" : "")
+            );
+        }
     }
 }
 

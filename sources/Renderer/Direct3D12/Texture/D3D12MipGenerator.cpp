@@ -12,6 +12,7 @@
 #include "../../DXCommon/DXCore.h"
 #include "../../DXCommon/DXTypes.h"
 #include "../../../Core/CoreUtils.h"
+#include <LLGL/Utils/ForRange.h>
 
 
 namespace LLGL
@@ -234,7 +235,6 @@ void D3D12MipGenerator::GenerateMips1D(
     ID3D12GraphicsCommandList* commandList = commandContext.GetCommandList();
     D3D12Resource& resource = texture.GetResource();
 
-    const D3D12_RESOURCE_STATES oldResourceState = texture.GetResource().currentState;
     commandContext.TransitionResource(resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, true);
 
     /* Set root signature and descriptor heap */
@@ -249,12 +249,16 @@ void D3D12MipGenerator::GenerateMips1D(
     commandList->SetComputeRootDescriptorTable(1, gpuDescHandle);
     gpuDescHandle.ptr += descHandleSize_;
 
-    D3D12_RESOURCE_DESC resourceDesc = texture.GetNative()->GetDesc();
+    D3D12_RESOURCE_DESC resourceDesc = resource.Get()->GetDesc();
 
     const std::uint32_t mipLevelEnd = subresource.baseMipLevel + subresource.numMipLevels - 1;
 
     for (std::uint32_t mipLevel = subresource.baseMipLevel; mipLevel < mipLevelEnd;)
     {
+        /* Transition source level MIPs to SRV states */
+        TransitionSourceMipLevel(commandContext, texture, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, mipLevel, subresource);
+        commandContext.FlushResourceBarriers();
+
         /* Determine source and destination extents */
         UINT srcWidth = static_cast<UINT>(resourceDesc.Width) >> mipLevel;
 
@@ -285,13 +289,14 @@ void D3D12MipGenerator::GenerateMips1D(
             1u
         );
 
+        /* Transition SRVs back to UAVs */
+        TransitionSourceMipLevel(commandContext, texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, mipLevel, subresource);
+
         /* Insert UAV barrier and move to next four MIP-maps */
-        commandContext.UAVBarrier(texture.GetNative(), true);
+        commandContext.UAVBarrier(resource.Get(), true);
 
         mipLevel += numMips;
     }
-
-    commandContext.TransitionResource(resource, oldResourceState, true);
 }
 
 void D3D12MipGenerator::GenerateMips2D(
@@ -305,7 +310,6 @@ void D3D12MipGenerator::GenerateMips2D(
     ID3D12GraphicsCommandList* commandList = commandContext.GetCommandList();
     D3D12Resource& resource = texture.GetResource();
 
-    const D3D12_RESOURCE_STATES oldResourceState = resource.currentState;
     commandContext.TransitionResource(resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, true);
 
     /* Set root signature and descriptor heap */
@@ -320,12 +324,16 @@ void D3D12MipGenerator::GenerateMips2D(
     commandList->SetComputeRootDescriptorTable(1, gpuDescHandle);
     gpuDescHandle.ptr += descHandleSize_;
 
-    D3D12_RESOURCE_DESC resourceDesc = texture.GetNative()->GetDesc();
+    D3D12_RESOURCE_DESC resourceDesc = resource.Get()->GetDesc();
 
     const std::uint32_t mipLevelEnd = subresource.baseMipLevel + subresource.numMipLevels - 1;
 
     for (std::uint32_t mipLevel = subresource.baseMipLevel; mipLevel < mipLevelEnd;)
     {
+        /* Transition source level MIPs to SRV states */
+        TransitionSourceMipLevel(commandContext, texture, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, mipLevel, subresource);
+        commandContext.FlushResourceBarriers();
+
         /* Determine source and destination extents */
         UINT srcWidth   = static_cast<UINT>(resourceDesc.Width)  >> mipLevel;
         UINT srcHeight  = static_cast<UINT>(resourceDesc.Height) >> mipLevel;
@@ -359,13 +367,16 @@ void D3D12MipGenerator::GenerateMips2D(
             subresource.numArrayLayers
         );
 
+        /* Transition SRVs back to UAVs */
+        TransitionSourceMipLevel(commandContext, texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, mipLevel, subresource);
+
         /* Insert UAV barrier and move to next four MIP-maps */
-        commandContext.UAVBarrier(texture.GetNative(), true);
+        commandContext.UAVBarrier(resource.Get());
 
         mipLevel += numMips;
     }
 
-    commandContext.TransitionResource(resource, oldResourceState, true);
+    commandContext.FlushResourceBarriers();
 }
 
 void D3D12MipGenerator::GenerateMips3D(
@@ -379,7 +390,6 @@ void D3D12MipGenerator::GenerateMips3D(
     ID3D12GraphicsCommandList* commandList = commandContext.GetCommandList();
     D3D12Resource& resource = texture.GetResource();
 
-    const D3D12_RESOURCE_STATES oldResourceState = texture.GetResource().currentState;
     commandContext.TransitionResource(resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, true);
 
     /* Set root signature and descriptor heap */
@@ -394,12 +404,16 @@ void D3D12MipGenerator::GenerateMips3D(
     commandList->SetComputeRootDescriptorTable(1, gpuDescHandle);
     gpuDescHandle.ptr += descHandleSize_;
 
-    D3D12_RESOURCE_DESC resourceDesc = texture.GetNative()->GetDesc();
+    D3D12_RESOURCE_DESC resourceDesc = resource.Get()->GetDesc();
 
     const std::uint32_t mipLevelEnd = subresource.baseMipLevel + subresource.numMipLevels - 1;
 
     for (std::uint32_t mipLevel = subresource.baseMipLevel; mipLevel < mipLevelEnd;)
     {
+        /* Transition source level MIPs to SRV states */
+        TransitionSourceMipLevel(commandContext, texture, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, mipLevel, subresource);
+        commandContext.FlushResourceBarriers();
+
         /* Determine source and destination extents */
         UINT srcWidth   = static_cast<UINT>(resourceDesc.Width)            >> mipLevel;
         UINT srcHeight  = static_cast<UINT>(resourceDesc.Height)           >> mipLevel;
@@ -435,13 +449,29 @@ void D3D12MipGenerator::GenerateMips3D(
             DivideRoundUp(dstDepth,  4u)
         );
 
+        /* Transition SRVs back to UAVs */
+        TransitionSourceMipLevel(commandContext, texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, mipLevel, subresource);
+
         /* Insert UAV barrier and move to next four MIP-maps */
-        commandContext.UAVBarrier(texture.GetNative(), true);
+        commandContext.UAVBarrier(resource.Get(), true);
 
         mipLevel += numMips;
     }
+}
 
-    commandContext.TransitionResource(resource, oldResourceState, true);
+void D3D12MipGenerator::TransitionSourceMipLevel(
+    D3D12CommandContext&        commandContext,
+    D3D12Texture&               texture,
+    D3D12_RESOURCE_STATES       newState,
+    D3D12_RESOURCE_STATES       oldState,
+    UINT                        mipLevel,
+    const TextureSubresource&   subresource)
+{
+    for_range(arrayLayer, subresource.numArrayLayers)
+    {
+        const UINT srvSubresource = texture.CalcSubresource(mipLevel, subresource.baseArrayLayer + arrayLayer);
+        commandContext.TransitionBarrier(texture.GetNative(), newState, oldState, srvSubresource, false);
+    }
 }
 
 

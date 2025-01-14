@@ -57,11 +57,11 @@ DEF_TEST( ResourceArrays )
     ResourceHeap* resHeap = renderer->CreateResourceHeap(
         psoLayout,
         {
-            // Left box resources:
+            // Left rectangle resources:
             textures[TexturePaintingA_NPOT], textures[TextureDetailMap],
             samplers[SamplerLinearNoMips], samplers[SamplerNearestNoMips],
 
-            // Right box resources:
+            // Right rectangle resources:
             textures[TexturePaintingB], textures[TextureDetailMap],
             samplers[SamplerLinearNoMips], samplers[SamplerLinearNoMips],
         }
@@ -100,12 +100,12 @@ DEF_TEST( ResourceArrays )
             cmdBuffer->Clear(ClearFlags::ColorDepth);
             cmdBuffer->SetResource(0, *sceneCbuffer);
 
-            // Draw left box
+            // Draw left rectangle
             cmdBuffer->SetViewport(Viewport{ Offset2D{ 0, 0 }, halfResolution });
             cmdBuffer->SetResourceHeap(*resHeap, 0);
             cmdBuffer->DrawIndexed(mesh.numIndices, 0);
 
-            // Draw right box
+            // Draw right rectangle
             cmdBuffer->SetViewport(Viewport{ Offset2D{ static_cast<std::int32_t>(halfResolution.width), 0 }, halfResolution });
             cmdBuffer->SetResourceHeap(*resHeap, 1);
             cmdBuffer->DrawIndexed(mesh.numIndices, 0);

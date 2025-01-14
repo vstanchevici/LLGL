@@ -75,6 +75,7 @@ class CsharpTranslator(Translator):
             'BufferDescriptor': CsharpProperties(getter = True, setter = True),
             'BufferViewDescriptor': CsharpProperties(getter = True),
             'ColorCodes': CsharpProperties(getter = True, setter = True),
+            'CombinedTextureSamplerDescriptor': CsharpProperties(getter = True, setter = True),
             'CommandBufferDescriptor': CsharpProperties(getter = True),
             'ComputePipelineDescriptor': CsharpProperties(getter = True),
             'ComputeShaderAttributes': CsharpProperties(getter = True, setter = True, fullCtor = True),
@@ -153,7 +154,7 @@ class CsharpTranslator(Translator):
                 nonlocal isInsideStruct
                 if typename.startswith(LLGLMeta.typePrefix):
                     return typename[len(LLGLMeta.typePrefix):]
-                elif typename in [LLGLMeta.UTF8STRING, LLGLMeta.STRING]:
+                elif typename in LLGLMeta.stringClasses:
                     return 'byte*' if isInsideStruct else 'string'
                 else:
                     return typename

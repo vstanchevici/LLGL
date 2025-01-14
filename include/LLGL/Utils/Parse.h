@@ -123,10 +123,13 @@ class LLGL_EXPORT ParseContext
             LLGL::BindingDescriptor{ "TexArray", LLGL::ResourceType::Texture, LLGL::BindFlags::Sampled,        LLGL::StageFlags::FragmentStage,                                 2u, 4u, },
         };
         myLayoutDescStd.bindings = {
-            LLGL::BindingDescriptor{             LLGL::ResourceType::Sampler, 0,                               LLGL::StageFlags::FragmentStage,                                 3u      },
+            LLGL::BindingDescriptor{ "smpl"      LLGL::ResourceType::Sampler, 0,                               LLGL::StageFlags::FragmentStage,                                 3u      },
         };
         myLayoutDescStd.uniforms = {
             LLGL::UniformDescriptor{ "WorldMatrix", LLGL::UniformType::Float4x4 }
+        };
+        myLayoutDescStd.combinedTextureSamplers = {
+            LLGL::CombinedTextureSamplerDescriptor{ "TexArray_smpl", "TexArray", "smpl" }
         };
 
         auto myLayout = myRenderer->CreatePipelineLayout(myLayoutDescStd);
@@ -134,10 +137,13 @@ class LLGL_EXPORT ParseContext
         The same pipeline layout can be created with the following usage of this utility function:
         \code
         // Abbreviated way of declaring a pipeline layout using the utility function:
-        LLGL::PipelineLayoutDescriptor myLayoutDescUtil = LLGL::Parse("heap{ cbuffer(Scene@0):frag:vert },"
-                                                                      "heap{ texture(1, TexArray@2[4]):frag },"
-                                                                      "sampler(3):frag,"
-                                                                      "float4x4(WorldMatrix),");
+        LLGL::PipelineLayoutDescriptor myLayoutDescUtil = LLGL::Parse(
+            "heap{ cbuffer(Scene@0):frag:vert },"       // Constant buffer "Scene"
+            "heap{ texture(1, TexArray@2[4]):frag },"   // Texture "TexArray"
+            "sampler(smpl@3):frag,"                     // Sampler "smpl"
+            "float4x4(WorldMatrix),"                    // Uniform "WorldMatrix"
+            "sampler<TexArray,smpl>(TexArray_smpl),"    // Combined texture-sampler "TexArray_smpl"
+        );
         auto myLayout = myRenderer->CreatePipelineLayout(myLayoutDescUtil);
         \endcode
         */
@@ -165,10 +171,10 @@ class LLGL_EXPORT ParseContext
             - \c anisotropy maps to SamplerDescriptor::maxAnisotropy and the value must be an integral number.
             - \c compare maps to SamplerDescriptor::compareOp (also enables SamplerDescriptor::compareEnabled) and the accepted values are:
                 - \c never (CompareOp::NeverPass).
-                - \c ls (CompareOp::Less).
+                - \c lt (CompareOp::Less). \c ls is also accepted but \e deprecated.
                 - \c eq (CompareOp::Equal).
                 - \c le (CompareOp::LessEqual).
-                - \c gr (CompareOp::Greater).
+                - \c gt (CompareOp::Greater). \c gr is also accepted but \e deprecated.
                 - \c ne (CompareOp::NotEqual).
                 - \c ge (CompareOp::GreaterEqual).
                 - \c always (CompareOp::AlwaysPass).
@@ -340,7 +346,7 @@ LLGL_EXPORT ParseContext Parse(const char* format, ...);
 */
 inline LLGL_EXPORT ParseContext Parse(const StringView& s)
 {
-    return ParseContext{ UTF8String{ s } };
+    return ParseContext{ s };
 }
 
 /** @} */

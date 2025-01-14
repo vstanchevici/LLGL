@@ -1,11 +1,11 @@
 /*
- * BindingDescriptorIterator.cpp
+ * BindingIterator.cpp
  *
  * Copyright (c) 2015 Lukas Hermanns. All rights reserved.
  * Licensed under the terms of the BSD 3-Clause license (see LICENSE.txt).
  */
 
-#include "BindingDescriptorIterator.h"
+#include "BindingIterator.h"
 #include <LLGL/Buffer.h>
 #include <LLGL/Texture.h>
 #include <LLGL/Sampler.h>
@@ -16,44 +16,6 @@
 
 namespace LLGL
 {
-
-
-/*
- * BindingDescriptorIterator class
- */
-
-BindingDescriptorIterator::BindingDescriptorIterator(const ArrayView<BindingDescriptor>& bindings) :
-    bindings_ { bindings }
-{
-}
-
-void BindingDescriptorIterator::Reset(const ResourceType typeOfInterest, long bindFlagsOfInterest, long stagesOfInterest)
-{
-    iterator_               = 0;
-    typeOfInterest_         = typeOfInterest;
-    bindFlagsOfInterest_    = bindFlagsOfInterest;
-    stagesOfInterest_       = stagesOfInterest;
-}
-
-const BindingDescriptor* BindingDescriptorIterator::Next(std::size_t* outIndex)
-{
-    while (iterator_ < bindings_.size())
-    {
-        /* Search for resource type of interest */
-        auto index = iterator_++;
-        const auto& binding = bindings_[index % bindings_.size()];
-        if ( binding.type == typeOfInterest_ &&
-             ( bindFlagsOfInterest_ == 0 || (binding.bindFlags  & bindFlagsOfInterest_) != 0 ) &&
-             ( stagesOfInterest_    == 0 || (binding.stageFlags & stagesOfInterest_   ) != 0 ) )
-        {
-            /* Return binding descriptor and optional index */
-            if (outIndex != nullptr)
-                *outIndex = index;
-            return (&binding);
-        }
-    }
-    return nullptr;
-}
 
 
 /*
@@ -94,8 +56,8 @@ static void ErrResourceTypeMismatch(ResourceType expectedType, ResourceType actu
 static void ErrBindFlagsMismatch(ResourceType resourceType, long expectedBindFlags, long actualBindFlags)
 {
     LLGL_TRAP(
-        "binding flags mismatch of resource object (LLGL::ResourceType::%s) used as binding point: expected %s, but got %s",
-        ResourceTypeToString(resourceType), IntToHex(expectedBindFlags), IntToHex(actualBindFlags)
+        "binding flags mismatch of resource object (LLGL::ResourceType::%s) used as binding point: expected 0x%08X, but got 0x%08X",
+        ResourceTypeToString(resourceType), static_cast<unsigned>(expectedBindFlags), static_cast<unsigned>(actualBindFlags)
     );
 }
 

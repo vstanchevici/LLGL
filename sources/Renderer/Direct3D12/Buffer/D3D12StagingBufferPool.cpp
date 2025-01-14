@@ -7,6 +7,7 @@
 
 #include "D3D12StagingBufferPool.h"
 #include "../Command/D3D12CommandContext.h"
+#include "../Command/D3D12CommandQueue.h"
 #include "../D3D12Resource.h"
 #include "../../../Core/CoreUtils.h"
 #include <algorithm>
@@ -51,12 +52,13 @@ HRESULT D3D12StagingBufferPool::WriteStaged(
 
     /* Write data to current chunk */
     HRESULT hr;
+    const D3D12_RESOURCE_STATES oldResourceState = dstBuffer.currentState;
     commandContext.TransitionResource(dstBuffer, D3D12_RESOURCE_STATE_COPY_DEST, true);
     {
         D3D12StagingBuffer& chunk = chunks_[chunkIdx_];
         hr = chunk.WriteAndIncrementOffset(commandContext.GetCommandList(), dstBuffer.Get(), dstOffset, data, dataSize);
     }
-    commandContext.TransitionResource(dstBuffer, dstBuffer.usageState, true);
+    commandContext.TransitionResource(dstBuffer, oldResourceState);
     return hr;
 }
 
@@ -70,11 +72,13 @@ HRESULT D3D12StagingBufferPool::WriteImmediate(
 {
     /* Write data to global upload buffer and copy region to destination buffer */
     HRESULT hr;
+    const D3D12_RESOURCE_STATES oldResourceState = dstBuffer.currentState;
     commandContext.TransitionResource(dstBuffer, D3D12_RESOURCE_STATE_COPY_DEST, true);
     {
-        hr = GetUploadBufferAndGrow(dataSize, alignment).Write(commandContext.GetCommandList(), dstBuffer.Get(), dstOffset, data, dataSize);
+        D3D12StagingBuffer& uploadBuffer = GetOrCreateCPUAccessBuffer(CPUAccessFlags::Write).GetUploadBufferAndGrow(dataSize, alignment);
+        hr = uploadBuffer.Write(commandContext.GetCommandList(), dstBuffer.Get(), dstOffset, data, dataSize);
     }
-    commandContext.TransitionResource(dstBuffer, dstBuffer.usageState, true);
+    commandContext.TransitionResource(dstBuffer, oldResourceState);
     return hr;
 }
 
@@ -87,32 +91,74 @@ HRESULT D3D12StagingBufferPool::ReadSubresourceRegion(
     UINT64                  dataSize,
     UINT64                  alignment)
 {
-    D3D12StagingBuffer& readbackBuffer = GetReadbackBufferAndGrow(dataSize, alignment);
+    D3D12CPUAccessBuffer& cpuAccessBuffer = GetOrCreateCPUAccessBuffer(CPUAccessFlags::Read);
+    return cpuAccessBuffer.ReadSubresourceRegion(
+        commandContext,
+        commandQueue,
+        srcBuffer,
+        srcOffset,
+        data,
+        dataSize,
+        alignment
+    );
+}
 
-    /* Copy source buffer region to readback buffer and flush command list */
-    commandContext.TransitionResource(srcBuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, true);
+D3D12StagingBufferPool::MapBufferTicket D3D12StagingBufferPool::MapFeedbackBuffer(
+    D3D12CommandContext&    commandContext,
+    D3D12CommandQueue&      commandQueue,
+    D3D12Resource&          srcBuffer,
+    const D3D12_RANGE&      readRange,
+    void**                  mappedData)
+{
+    MapBufferTicket ticket;
+    D3D12CPUAccessBuffer& cpuAccessBuffer = GetOrCreateCPUAccessBuffer(CPUAccessFlags::Read);
+    HRESULT hr = cpuAccessBuffer.MapFeedbackBuffer(commandContext, commandQueue, srcBuffer, readRange, mappedData);
+    if (SUCCEEDED(hr))
     {
-        commandContext.GetCommandList()->CopyBufferRegion(readbackBuffer.GetNative(), 0, srcBuffer.Get(), srcOffset, dataSize);
+        ticket.cpuAccessBuffer = &cpuAccessBuffer;
+        ++numReadMappedCPUBuffers_;
     }
-    commandContext.TransitionResource(srcBuffer, srcBuffer.usageState, true);
-    commandContext.FinishAndSync(commandQueue);
+    ticket.hr = hr;
+    return ticket;
+}
 
-    /* Map readback buffer to CPU memory space */
-    char* mappedData = nullptr;
-    const D3D12_RANGE readRange{ 0, static_cast<SIZE_T>(dataSize) };
+void D3D12StagingBufferPool::UnmapFeedbackBuffer(MapBufferTicket ticket)
+{
+    if (D3D12CPUAccessBuffer* cpuAccessBuffer = ticket.cpuAccessBuffer)
+    {
+        cpuAccessBuffer->UnmapFeedbackBuffer();
+        --numReadMappedCPUBuffers_;
+    }
+}
 
-    HRESULT hr = readbackBuffer.GetNative()->Map(0, &readRange, reinterpret_cast<void**>(&mappedData));
-    if (FAILED(hr))
-        return hr;
+D3D12StagingBufferPool::MapBufferTicket D3D12StagingBufferPool::MapUploadBuffer(
+    SIZE_T                  size,
+    void**                  mappedData)
+{
+    MapBufferTicket ticket;
+    D3D12CPUAccessBuffer& cpuAccessBuffer = GetOrCreateCPUAccessBuffer(CPUAccessFlags::Write);
+    HRESULT hr = cpuAccessBuffer.MapUploadBuffer(size, mappedData);
+    if (SUCCEEDED(hr))
+    {
+        ticket.cpuAccessBuffer = &cpuAccessBuffer;
+        ++numWriteMappedCPUBuffers_;
+    }
+    ticket.hr = hr;
+    return ticket;
+}
 
-    /* Copy readback buffer into output data */
-    ::memcpy(data, mappedData, static_cast<std::size_t>(dataSize));
-
-    /* Unmap buffer with range of written data */
-    const D3D12_RANGE writtenRange{ 0, 0 };
-    readbackBuffer.GetNative()->Unmap(0, &writtenRange);
-
-    return S_OK;
+void D3D12StagingBufferPool::UnmapUploadBuffer(
+    D3D12CommandContext&    commandContext,
+    D3D12CommandQueue&      commandQueue,
+    D3D12Resource&          dstBuffer,
+    const D3D12_RANGE&      writtenRange,
+    MapBufferTicket         ticket)
+{
+    if (D3D12CPUAccessBuffer* cpuAccessBuffer = ticket.cpuAccessBuffer)
+    {
+        cpuAccessBuffer->UnmapUploadBuffer(commandContext, commandQueue, dstBuffer, writtenRange);
+        --numWriteMappedCPUBuffers_;
+    }
 }
 
 
@@ -126,32 +172,22 @@ void D3D12StagingBufferPool::AllocChunk(UINT64 minChunkSize)
     chunkIdx_ = chunks_.size() - 1;
 }
 
-void D3D12StagingBufferPool::ResizeBuffer(
-    D3D12StagingBuffer& stagingBuffer,
-    D3D12_HEAP_TYPE     heapType,
-    UINT64              size,
-    UINT64              alignment)
+D3D12CPUAccessBuffer& D3D12StagingBufferPool::GetOrCreateCPUAccessBuffer(long cpuAccessFlags)
 {
-    /* Check if global upload buffer must be resized */
-    UINT64 alignedSize = GetAlignedSize(size, alignment);
-    if (!stagingBuffer.Capacity(alignedSize))
+    if (((cpuAccessFlags & CPUAccessFlags::Read ) == 0 || numReadMappedCPUBuffers_  < cpuAccessBuffers_.size()) &&
+        ((cpuAccessFlags & CPUAccessFlags::Write) == 0 || numWriteMappedCPUBuffers_ < cpuAccessBuffers_.size()))
     {
-        /* Use at least a bigger alignment for allocating the global buffers to reduce number of reallocations */
-        constexpr UINT64 minAlignment = 4096ull;
-        stagingBuffer.Create(device_, alignedSize, minAlignment, heapType);
+        /* Try to find available CPU access buffer */
+        for (D3D12CPUAccessBuffer& cpuAccessBuffer : cpuAccessBuffers_)
+        {
+            if ((cpuAccessBuffer.GetCurrentCPUAccessFlags() & cpuAccessFlags) == 0)
+                return cpuAccessBuffer;
+        }
     }
-}
 
-D3D12StagingBuffer& D3D12StagingBufferPool::GetUploadBufferAndGrow(UINT64 size, UINT64 alignment)
-{
-    ResizeBuffer(globalUploadBuffer_, D3D12_HEAP_TYPE_UPLOAD, size, alignment);
-    return globalUploadBuffer_;
-}
-
-D3D12StagingBuffer& D3D12StagingBufferPool::GetReadbackBufferAndGrow(UINT64 size, UINT64 alignment)
-{
-    ResizeBuffer(globalReadbackBuffer_, D3D12_HEAP_TYPE_READBACK, size, alignment);
-    return globalReadbackBuffer_;
+    /* If all CPU access buffers are already mapped, create a new one */
+    cpuAccessBuffers_.emplace_back(device_);
+    return cpuAccessBuffers_.back();
 }
 
 

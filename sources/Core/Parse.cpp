@@ -554,6 +554,71 @@ static bool ParseBoolean(Parser& parser, bool& outValue)
     return true;
 }
 
+static bool ParseCombinedTextureSamplerHeader(Parser& parser, CombinedTextureSamplerDescriptor& outDesc)
+{
+    if (!parser.Accept("<"))
+        return ReturnWithParseError(parser, "expected '<' token at beginning of combined texture-sampler");
+
+    if (!parser.MatchIdent())
+        return ReturnWithParseError(parser, "expected texture identifier for combined texture-sampler");
+    outDesc.textureName = parser.Accept();
+
+    if (!parser.Accept(","))
+        return ReturnWithParseError(parser, "expected ',' token after texture identifier for combined texture-sampler");
+
+    if (!parser.MatchIdent())
+        return ReturnWithParseError(parser, "expected sampler identifier for combined texture-sampler");
+    outDesc.samplerName = parser.Accept();
+
+    if (!parser.Accept(">"))
+        return ReturnWithParseError(parser, "expected '>' token at end of combined texture-sampler header");
+
+    return true;
+}
+
+static bool ParseCombinedTextureSamplerDesc(Parser& parser, PipelineLayoutDescriptor& outDesc)
+{
+    /* Parse template arguments */
+    CombinedTextureSamplerDescriptor texSamplerDesc;
+    if (!ParseCombinedTextureSamplerHeader(parser, texSamplerDesc))
+        return false;
+
+    /* Parse binding points */
+    if (!parser.Accept("("))
+        return ReturnWithParseError(parser, "expected open bracket '(' after combined texture-sampler header");
+
+    while (parser.Feed() && !parser.Match(")"))
+    {
+        /* Parse optional name */
+        if (parser.MatchIdent())
+        {
+            StringView tok = parser.Accept();
+            texSamplerDesc.name = tok;
+            if (!parser.Accept("@"))
+                return ReturnWithParseError(parser, "expected '@' token after resource identifier: %s", texSamplerDesc.name);
+        }
+        else
+            texSamplerDesc.name.clear();
+
+        /* Parse slot number */
+        if (ParseUInt32(parser, texSamplerDesc.slot.index) == 0)
+            return false;
+
+        /* Add new combined texture-sampler to output descriptor */
+        outDesc.combinedTextureSamplers.push_back(texSamplerDesc);
+
+        if (parser.Match(","))
+            parser.Accept();
+        else
+            break;
+    }
+
+    if (!parser.Accept(")"))
+        return ReturnWithParseError(parser, "expected close bracket ')' after slot indices");
+
+    return true;
+}
+
 static bool ParseLayoutSignatureResourceBinding(Parser& parser, PipelineLayoutDescriptor& outDesc, bool isHeap)
 {
     BindingDescriptor bindingDesc;
@@ -562,6 +627,15 @@ static bool ParseLayoutSignatureResourceBinding(Parser& parser, PipelineLayoutDe
     /* Parse resource type and set stages to default */
     if (!ParseLayoutSignatureResourceType(parser, bindingDesc.type, bindingDesc.bindFlags))
         return false;
+
+    /* Parse template syntax */
+    if (parser.Match("<"))
+    {
+        if (bindingDesc.type == ResourceType::Sampler)
+            return ParseCombinedTextureSamplerDesc(parser, outDesc);
+        else
+            return ReturnWithParseError(parser, "template syntax only accepted for 'sampler' type");
+    }
 
     /* Parse binding points */
     if (!parser.Accept("("))
@@ -575,7 +649,7 @@ static bool ParseLayoutSignatureResourceBinding(Parser& parser, PipelineLayoutDe
         if (parser.MatchIdent())
         {
             StringView tok = parser.Accept();
-            bindingDesc.name = std::string{ tok.begin(), tok.end() };
+            bindingDesc.name = tok;
             if (!parser.Accept("@"))
                 return ReturnWithParseError(parser, "expected '@' token after resource identifier: %s", bindingDesc.name);
         }
@@ -593,6 +667,11 @@ static bool ParseLayoutSignatureResourceBinding(Parser& parser, PipelineLayoutDe
                 return false;
             if (!parser.Accept("]"))
                 return ReturnWithParseError(parser, "expected closing ']' after array size");
+        }
+        else
+        {
+            /* Reset array size to ensure parser is not picking up the value from a previous entry */
+            bindingDesc.arraySize = 0;
         }
 
         /* Add new binding point to output descriptor */
@@ -757,8 +836,9 @@ static bool ParseLayoutSignatureBarrierFlag(Parser& parser, PipelineLayoutDescri
 static bool ParseLayoutSignatureBinding(Parser& parser, PipelineLayoutDescriptor& outDesc, bool isHeap)
 {
     /* Check if resource type denotes a uniform binding */
-    const UniformType uniformType = StringToUniformType(parser.Token());
-    if (uniformType != UniformType::Undefined)
+    UniformDescriptor uniformDesc;
+    uniformDesc.type = StringToUniformType(parser.Token());
+    if (uniformDesc.type != UniformType::Undefined)
     {
         if (isHeap)
             return ReturnWithParseError(parser, "uniform bindings must not be declared inside a heap");
@@ -770,15 +850,11 @@ static bool ParseLayoutSignatureBinding(Parser& parser, PipelineLayoutDescriptor
 
         while (parser.Feed() && !parser.Match(")"))
         {
-            UniformDescriptor uniformDesc;
-            uniformDesc.type = uniformType;
-
             /* Parse uniform name */
             if (!parser.MatchIdent())
                 return ReturnWithParseError(parser, "expected uniform name");
 
-            const StringView uniformName = parser.Accept();
-            uniformDesc.name = std::string{ uniformName.begin(), uniformName.end() };
+            uniformDesc.name = parser.Accept();
 
             /* Parse optional array size */
             if (parser.Accept("["))
@@ -787,6 +863,11 @@ static bool ParseLayoutSignatureBinding(Parser& parser, PipelineLayoutDescriptor
                     return false;
                 if (!parser.Accept("]"))
                     return ReturnWithParseError(parser, "expected close squared bracket ']' after array size");
+            }
+            else
+            {
+                /* Reset array size to ensure parser is not picking up the value from a previous entry */
+                uniformDesc.arraySize = 0;
             }
 
             /* Append current uniform descriptor to output layout */
@@ -1129,10 +1210,12 @@ static bool ParseCompareOp(Parser& parser, CompareOp& outValue)
         parser,
         {
             { "never",  CompareOp::NeverPass    },
-            { "ls",     CompareOp::Less         },
+            { "lt",     CompareOp::Less         },
+            { "ls",     CompareOp::Less         }, // deprecated
             { "eq",     CompareOp::Equal        },
             { "le",     CompareOp::LessEqual    },
-            { "gr",     CompareOp::Greater      },
+            { "gt",     CompareOp::Greater      },
+            { "gr",     CompareOp::Greater      }, // deprecated
             { "ne",     CompareOp::NotEqual     },
             { "ge",     CompareOp::GreaterEqual },
             { "always", CompareOp::AlwaysPass   },

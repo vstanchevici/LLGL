@@ -9,6 +9,8 @@
 #include "../Shader/D3D12RootParameter.h"
 #include "../D3D12Types.h"
 #include "../../ResourceUtils.h"
+#include "../../../Core/CoreUtils.h"
+#include <LLGL/Backend/Direct3D12/NativeHandle.h>
 
 
 namespace LLGL
@@ -18,6 +20,17 @@ namespace LLGL
 D3D12Sampler::D3D12Sampler(const SamplerDescriptor& desc)
 {
     D3D12Sampler::ConvertDesc(nativeDesc_, desc);
+}
+
+bool D3D12Sampler::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
+{
+    if (auto* nativeHandleD3D = GetTypedNativeHandle<Direct3D12::ResourceNativeHandle>(nativeHandle, nativeHandleSize))
+    {
+        nativeHandleD3D->type                       = Direct3D12::ResourceNativeType::SamplerDescriptor;
+        nativeHandleD3D->samplerDesc.samplerDesc    = nativeDesc_;
+        return true;
+    }
+    return false;
 }
 
 void D3D12Sampler::CreateResourceView(ID3D12Device* device, D3D12_CPU_DESCRIPTOR_HANDLE cpuDescriptorHandle)
@@ -35,7 +48,7 @@ static void D3DConvertBaseSamplerDesc(TNativeSamplerDesc& outDesc, const Sampler
     outDesc.AddressW        = D3D12Types::Map(inDesc.addressModeW);
     outDesc.MipLODBias      = inDesc.mipMapLODBias;
     outDesc.MaxAnisotropy   = inDesc.maxAnisotropy;
-    outDesc.ComparisonFunc  = (inDesc.compareEnabled ? D3D12Types::Map(inDesc.compareOp) : D3D12_COMPARISON_FUNC_ALWAYS);
+    outDesc.ComparisonFunc  = (inDesc.compareEnabled ? D3D12Types::Map(inDesc.compareOp) : D3D12_COMPARISON_FUNC_NEVER);
 
     if (inDesc.mipMapEnabled)
     {

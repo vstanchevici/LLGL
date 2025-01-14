@@ -267,7 +267,7 @@ static std::size_t ExecuteGLCommand(const GLOpcode opcode, const void* pc, GLSta
         case GLOpcodeBindResourceHeap:
         {
             auto cmd = reinterpret_cast<const GLCmdBindResourceHeap*>(pc);
-            cmd->resourceHeap->Bind(*stateMngr, cmd->descriptorSet);
+            cmd->resourceHeap->Bind(*stateMngr, cmd->descriptorSet, cmd->bufferInterfaceMap);
             return sizeof(*cmd);
         }
         case GLOpcodeBindRenderTarget:
@@ -469,8 +469,13 @@ static std::size_t ExecuteGLCommand(const GLOpcode opcode, const void* pc, GLSta
         case GLOpcodeBindTexture:
         {
             auto cmd = reinterpret_cast<const GLCmdBindTexture*>(pc);
-            stateMngr->ActiveTexture(cmd->slot);
-            stateMngr->BindGLTexture(*(cmd->texture));
+            stateMngr->BindGLTexture(cmd->slot, *(cmd->texture));
+            return sizeof(*cmd);
+        }
+        case GLOpcodeBindTextureNative:
+        {
+            auto cmd = reinterpret_cast<const GLCmdBindTextureNative*>(pc);
+            stateMngr->BindTexture(cmd->slot, cmd->target, cmd->id);
             return sizeof(*cmd);
         }
         case GLOpcodeBindImageTexture:

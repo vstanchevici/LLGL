@@ -229,13 +229,13 @@ static const GLenum g_textureLayersEnum[] =
  * Internal functions
  */
 
-static constexpr GLuint g_invalidGLId = UINT_MAX;
+static constexpr GLuint k_invalidGLID = UINT_MAX;
 
 static void InvalidateBoundGLObject(GLuint& boundId, const GLuint releasedObjectId)
 {
     /* Invalidate bound ID by setting it to maximum value */
     if (boundId == releasedObjectId)
-        boundId = g_invalidGLId;
+        boundId = k_invalidGLID;
 }
 
 
@@ -1114,7 +1114,7 @@ void GLStateManager::PopBoundBuffer()
 {
     const auto& state = bufferStack_.top();
     {
-        if (state.buffer != g_invalidGLId)
+        if (state.buffer != k_invalidGLID)
             BindBuffer(state.target, state.buffer);
     }
     bufferStack_.pop();
@@ -1207,7 +1207,7 @@ void GLStateManager::PopBoundFramebuffer()
 {
     const auto& state = framebufferStack_.top();
     {
-        if (state.framebuffer != g_invalidGLId)
+        if (state.framebuffer != k_invalidGLID)
             BindFramebuffer(state.target, state.framebuffer);
     }
     framebufferStack_.pop();
@@ -1252,7 +1252,7 @@ void GLStateManager::PopBoundRenderbuffer()
 {
     const auto& state = renderbufferStack_.top();
     {
-        if (state.renderbuffer != g_invalidGLId)
+        if (state.renderbuffer != k_invalidGLID)
             BindRenderbuffer(state.renderbuffer);
     }
     renderbufferStack_.pop();
@@ -1321,28 +1321,39 @@ GLenum GLStateManager::ToGLTextureTarget(const GLTextureTarget target)
     return g_textureTargetsEnum[static_cast<std::size_t>(target)];
 }
 
-void GLStateManager::ActiveTexture(GLuint layer)
+void GLStateManager::BindTexture(GLTextureTarget target, GLuint texture)
+{
+    /* Only bind texutre if the texture has changed */
+    auto targetIdx = static_cast<std::size_t>(target);
+    GLContextState::TextureLayer* textureLayer = GetActiveTextureLayer();
+    if (textureLayer->boundTextures[targetIdx] != texture)
+    {
+        textureLayer->boundTextures[targetIdx] = texture;
+        glBindTexture(g_textureTargetsEnum[targetIdx], texture);
+    }
+}
+
+void GLStateManager::BindTexture(GLuint layer, GLTextureTarget target, GLuint texture)
 {
     #ifdef LLGL_DEBUG
     LLGL_ASSERT_UPPER_BOUND(layer, GLContextState::numTextureLayers);
     #endif
 
-    if (contextState_.activeTexture != layer)
-    {
-        /* Active specified texture layer and store reference to bound textures array */
-        contextState_.activeTexture = layer;
-        glActiveTexture(g_textureLayersEnum[layer]);
-    }
-}
-
-void GLStateManager::BindTexture(GLTextureTarget target, GLuint texture)
-{
     /* Only bind texutre if the texture has changed */
     auto targetIdx = static_cast<std::size_t>(target);
-    auto textureLayer = GetActiveTextureLayer();
-    if (textureLayer->boundTextures[targetIdx] != texture)
+    GLContextState::TextureLayer& textureLayer = contextState_.textureLayers[layer];
+    if (textureLayer.boundTextures[targetIdx] != texture)
     {
-        textureLayer->boundTextures[targetIdx] = texture;
+        textureLayer.boundTextures[targetIdx] = texture;
+
+        /* Activate specified texture layer and store reference to bound textures array */
+        if (contextState_.activeTexture != layer)
+        {
+            contextState_.activeTexture = layer;
+            glActiveTexture(g_textureLayersEnum[layer]);
+        }
+
+        /* Bind native GL texture to active layer */
         glBindTexture(g_textureTargetsEnum[targetIdx], texture);
     }
 }
@@ -1371,10 +1382,7 @@ void GLStateManager::BindTextures(GLuint first, GLsizei count, const GLTextureTa
     {
         /* Bind each texture layer individually */
         for_range(i, count)
-        {
-            ActiveTexture(first + i);
-            BindTexture(targets[i], textures[i]);
-        }
+            BindTexture(first + i, targets[i], textures[i]);
     }
 }
 
@@ -1403,9 +1411,8 @@ void GLStateManager::UnbindTextures(GLuint first, GLsizei count)
         /* Unbind all targets for each texture layer individually */
         for_range(i, count)
         {
-            ActiveTexture(first + i);
             for_range(target, GLContextState::numTextureTargets)
-                BindTexture(static_cast<GLTextureTarget>(target), 0);
+                BindTexture(first + i, static_cast<GLTextureTarget>(target), 0);
         }
     }
 }
@@ -1490,11 +1497,8 @@ void GLStateManager::PopBoundTexture()
 {
     const auto& state = textureState_.top();
     {
-        if (state.texture != g_invalidGLId)
-        {
-            ActiveTexture(state.layer);
-            BindTexture(state.target, state.texture);
-        }
+        if (state.texture != k_invalidGLID)
+            BindTexture(state.layer, state.target, state.texture);
     }
     textureState_.pop();
 }
@@ -1511,6 +1515,23 @@ void GLStateManager::BindGLTexture(GLTexture& texture)
         {
             boundGLTextures_[contextState_.activeTexture] = &texture;
             if (const GLEmulatedSampler* emulatedSamplerGL = boundGLEmulatedSamplers_[contextState_.activeTexture])
+                texture.BindTexParameters(*emulatedSamplerGL);
+        }
+    }
+}
+
+void GLStateManager::BindGLTexture(GLuint layer, GLTexture& texture)
+{
+    /* Bind native texture */
+    BindTexture(layer, GLStateManager::GetTextureTarget(texture.GetType()), texture.GetID());
+
+    /* Manage reference for emulated sampler binding */
+    if (!HasNativeSamplers())
+    {
+        if (boundGLTextures_[layer] != &texture)
+        {
+            boundGLTextures_[layer] = &texture;
+            if (const GLEmulatedSampler* emulatedSamplerGL = boundGLEmulatedSamplers_[layer])
                 texture.BindTexParameters(*emulatedSamplerGL);
         }
     }
@@ -1612,9 +1633,6 @@ void GLStateManager::BindCombinedEmulatedSampler(GLuint layer, const GLEmulatedS
     LLGL_ASSERT_UPPER_BOUND(layer, GLContextState::numTextureLayers);
     #endif
 
-    /* Activate specified texture layer */
-    ActiveTexture(layer);
-
     /* Keep reference to GLTexture for emulated sampler binding */
     boundGLTextures_[layer] = &texture;
     boundGLEmulatedSamplers_[layer] = &sampler;
@@ -1623,7 +1641,7 @@ void GLStateManager::BindCombinedEmulatedSampler(GLuint layer, const GLEmulatedS
     texture.BindTexParameters(sampler);
 
     /* Bind native texture */
-    BindTexture(GLStateManager::GetTextureTarget(texture.GetType()), texture.GetID());
+    BindTexture(layer, GLStateManager::GetTextureTarget(texture.GetType()), texture.GetID());
 }
 
 /* ----- Shader program ----- */
@@ -1646,7 +1664,7 @@ void GLStateManager::PopBoundShaderProgram()
 {
     const auto& state = shaderProgramStack_.top();
     {
-        if (state.program != g_invalidGLId)
+        if (state.program != k_invalidGLID)
             BindShaderProgram(state.program);
     }
     shaderProgramStack_.pop();

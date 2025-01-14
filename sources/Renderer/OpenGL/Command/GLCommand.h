@@ -35,6 +35,7 @@ class GLRenderTarget;
 class GLRenderPass;
 class GLDeferredCommandBuffer;
 class GLEmulatedSampler;
+class GLShaderBufferInterfaceMap;
 
 
 struct GLCmdBufferSubData
@@ -231,8 +232,9 @@ struct GLCmdBeginTransformFeedbackNV
 
 struct GLCmdBindResourceHeap
 {
-    GLResourceHeap* resourceHeap;
-    std::uint32_t   descriptorSet;
+    GLResourceHeap*                     resourceHeap;
+    std::uint32_t                       descriptorSet;
+    const GLShaderBufferInterfaceMap*   bufferInterfaceMap;
 };
 
 struct GLCmdBindRenderTarget
@@ -421,6 +423,13 @@ struct GLCmdBindTexture
 {
     GLuint      slot;
     GLTexture*  texture;
+};
+
+struct GLCmdBindTextureNative
+{
+    GLuint              slot;
+    GLuint              id;
+    GLTextureTarget     target;
 };
 
 struct GLCmdBindImageTexture

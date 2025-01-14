@@ -24,6 +24,10 @@ class GLEmulatedSampler final : public Sampler
 
     public:
 
+        #include <LLGL/Backend/Sampler.inl>
+
+    public:
+
         // Converts and stores the sampler descriptor to GL states.
         void SamplerParameters(const SamplerDescriptor& desc);
 
@@ -59,7 +63,7 @@ class GLEmulatedSampler final : public Sampler
 
 };
 
-using GLEmulatedSamplerPtr = std::unique_ptr<GLEmulatedSampler>;
+using GLEmulatedSamplerSPtr = std::shared_ptr<GLEmulatedSampler>;
 
 
 } // /namespace LLGL

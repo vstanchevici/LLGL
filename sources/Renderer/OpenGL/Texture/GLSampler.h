@@ -23,6 +23,10 @@ class GLSampler final : public Sampler
 
     public:
 
+        #include <LLGL/Backend/Sampler.inl>
+
+    public:
+
         void SetDebugName(const char* name) override;
 
     public:
@@ -45,7 +49,7 @@ class GLSampler final : public Sampler
 
 };
 
-using GLSamplerPtr = std::unique_ptr<GLSampler>;
+using GLSamplerSPtr = std::shared_ptr<GLSampler>;
 
 
 } // /namespace LLGL

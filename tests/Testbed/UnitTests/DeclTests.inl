@@ -21,6 +21,7 @@
 DECL_RITEST( ContainerDynamicArray );
 DECL_RITEST( ContainerSmallVector );
 DECL_RITEST( ContainerUTF8String );
+DECL_RITEST( ContainerStringLiteral );
 DECL_RITEST( ParseUtil );
 DECL_RITEST( ImageConversions );
 
@@ -61,6 +62,8 @@ DECL_TEST( RenderTargetNAttachments );
 DECL_TEST( MipMaps );
 DECL_TEST( PipelineCaching );
 DECL_TEST( ShaderErrors );
+DECL_TEST( SamplerBuffer );
+DECL_TEST( NativeHandle );
 
 // Rendering tests
 DECL_TEST( DepthBuffer );
@@ -77,6 +80,7 @@ DECL_TEST( ResourceBinding );
 DECL_TEST( ResourceArrays );
 DECL_TEST( StreamOutput );
 DECL_TEST( ResourceCopy );
+DECL_TEST( CombinedTexSamplers );
 
 // C99 tests
 DECL_TEST( OffscreenC99 );

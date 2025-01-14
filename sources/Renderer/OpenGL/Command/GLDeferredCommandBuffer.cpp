@@ -369,10 +369,13 @@ void GLDeferredCommandBuffer::SetIndexBuffer(Buffer& buffer, const Format format
 void GLDeferredCommandBuffer::SetResourceHeap(ResourceHeap& resourceHeap, std::uint32_t descriptorSet)
 {
     auto cmd = AllocCommand<GLCmdBindResourceHeap>(GLOpcodeBindResourceHeap);
-    cmd->resourceHeap   = LLGL_CAST(GLResourceHeap*, &resourceHeap);
-    cmd->descriptorSet  = descriptorSet;
+    {
+        cmd->resourceHeap       = LLGL_CAST(GLResourceHeap*, &resourceHeap);
+        cmd->descriptorSet      = descriptorSet;
+        cmd->bufferInterfaceMap = GetBoundPipelineState()->GetBufferInterfaceMap();
+    }
     #if LLGL_GLEXT_MEMORY_BARRIERS
-    InvalidateMemoryBarriers(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    InvalidateMemoryBarriers(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT); //TODO: find optimal bitmask from resource heap
     #endif
 }
 
@@ -386,37 +389,84 @@ void GLDeferredCommandBuffer::SetResource(std::uint32_t descriptor, Resource& re
     if (!(descriptor < bindingList.size()))
         return /*GL_INVALID_INDEX*/;
 
-    const auto& binding = bindingList[descriptor];
-    switch (binding.type)
+    const GLPipelineResourceBinding& binding = bindingList[descriptor];
+    if (binding.combiners > 0)
+    {
+        /* Bind resource at one or more slots for combined texture-samplers */
+        const std::vector<GLuint>& combinedSamplerSlots = pipelineLayoutGL->GetCombinedSamplerSlots();
+        BindCombinedResource(binding.type, &(combinedSamplerSlots[binding.slot]), binding.combiners, resource);
+    }
+    else
+    {
+        /* Bind resource at explicit binding slot */
+        BindResource(binding.type, binding.slot, binding.ssboIndex, resource);
+    }
+}
+
+// private
+void GLDeferredCommandBuffer::BindResource(GLResourceType type, GLuint slot, std::uint32_t descriptor, Resource& resource)
+{
+    switch (type)
     {
         case GLResourceType_Invalid:
+        case GLResourceType_End:
+        {
+            // ignore
+        }
         break;
 
         case GLResourceType_UBO:
         {
             auto& bufferGL = LLGL_CAST(GLBuffer&, resource);
-            BindBufferBase(GLBufferTarget::UniformBuffer, bufferGL, binding.slot);
+            BindBufferBase(GLBufferTarget::UniformBuffer, bufferGL, slot);
         }
         break;
 
-        case GLResourceType_SSBO:
+        case GLResourceType_Buffer:
         {
             auto& bufferGL = LLGL_CAST(GLBuffer&, resource);
-            BindBufferBase(GLBufferTarget::ShaderStorageBuffer, bufferGL, binding.slot);
-            #if LLGL_GLEXT_MEMORY_BARRIERS
-            if ((bufferGL.GetBindFlags() & BindFlags::Storage) != 0)
-                InvalidateMemoryBarriers(GL_SHADER_STORAGE_BARRIER_BIT);
-            #endif
+
+            /* Lookup whether this is an SSBO, sampler buffer, or image buffer in buffer interface map */
+            const GLShaderBufferInterfaceMap* bufferInterfaceMap = GetBoundPipelineState()->GetBufferInterfaceMap();
+            GLBufferInterface bufferInterface = bufferInterfaceMap->GetDynamicInterfaces()[descriptor];
+            switch (bufferInterface)
+            {
+                case GLBufferInterface_SSBO:
+                {
+                    BindBufferBase(GLBufferTarget::ShaderStorageBuffer, bufferGL, slot);
+                    #if LLGL_GLEXT_MEMORY_BARRIERS
+                    InvalidateMemoryBarriersForStorageResource(bufferGL.GetBindFlags(), GL_SHADER_STORAGE_BARRIER_BIT);
+                    #endif
+                }
+                break;
+
+                case GLBufferInterface_Sampler:
+                {
+                    BindTextureNative(bufferGL.GetTexID(), GLTextureTarget::TextureBuffer, slot);
+                    #if LLGL_GLEXT_MEMORY_BARRIERS
+                    InvalidateMemoryBarriersForStorageResource(bufferGL.GetBindFlags(), GL_TEXTURE_FETCH_BARRIER_BIT);
+                    #endif
+                }
+                break;
+
+                case GLBufferInterface_Image:
+                {
+                    BindImageTexture(bufferGL.GetTexID(), bufferGL.GetTexGLInternalFormat(), slot);
+                    #if LLGL_GLEXT_MEMORY_BARRIERS
+                    InvalidateMemoryBarriersForStorageResource(bufferGL.GetBindFlags(), GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+                    #endif
+                }
+                break;
+            }
         }
         break;
 
         case GLResourceType_Texture:
         {
             auto& textureGL = LLGL_CAST(GLTexture&, resource);
-            BindTexture(textureGL, binding.slot);
+            BindTexture(textureGL, slot);
             #if LLGL_GLEXT_MEMORY_BARRIERS
-            if ((textureGL.GetBindFlags() & BindFlags::Storage) != 0)
-                InvalidateMemoryBarriers(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+            InvalidateMemoryBarriersForStorageResource(textureGL.GetBindFlags(), GL_TEXTURE_FETCH_BARRIER_BIT);
             #endif
         }
         break;
@@ -424,7 +474,39 @@ void GLDeferredCommandBuffer::SetResource(std::uint32_t descriptor, Resource& re
         case GLResourceType_Image:
         {
             auto& textureGL = LLGL_CAST(GLTexture&, resource);
-            BindImageTexture(textureGL, binding.slot);
+            BindImageTexture(textureGL.GetID(), textureGL.GetGLInternalFormat(), slot);
+            #if LLGL_GLEXT_MEMORY_BARRIERS
+            InvalidateMemoryBarriersForStorageResource(textureGL.GetBindFlags(), GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+            #endif
+        }
+        break;
+
+        case GLResourceType_Sampler:
+        {
+            auto& samplerGL = LLGL_CAST(GLSampler&, resource);
+            BindSampler(samplerGL, slot);
+        }
+        break;
+
+        case GLResourceType_EmulatedSampler:
+        {
+            auto& emulatedSamplerGL = LLGL_CAST(GLEmulatedSampler&, resource);
+            BindEmulatedSampler(emulatedSamplerGL, slot);
+        }
+        break;
+    }
+}
+
+// private
+void GLDeferredCommandBuffer::BindCombinedResource(GLResourceType type, const GLuint* slots, std::uint32_t numSlots, Resource& resource)
+{
+    switch (type)
+    {
+        case GLResourceType_Texture:
+        {
+            auto& textureGL = LLGL_CAST(GLTexture&, resource);
+            for_range(i, numSlots)
+                BindTexture(textureGL, slots[i]);
             #if LLGL_GLEXT_MEMORY_BARRIERS
             if ((textureGL.GetBindFlags() & BindFlags::Storage) != 0)
                 InvalidateMemoryBarriers(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
@@ -435,14 +517,22 @@ void GLDeferredCommandBuffer::SetResource(std::uint32_t descriptor, Resource& re
         case GLResourceType_Sampler:
         {
             auto& samplerGL = LLGL_CAST(GLSampler&, resource);
-            BindSampler(samplerGL, binding.slot);
+            for_range(i, numSlots)
+                BindSampler(samplerGL, slots[i]);
         }
         break;
 
         case GLResourceType_EmulatedSampler:
         {
             auto& emulatedSamplerGL = LLGL_CAST(GLEmulatedSampler&, resource);
-            BindEmulatedSampler(emulatedSamplerGL, binding.slot);
+            for_range(i, numSlots)
+                BindEmulatedSampler(emulatedSamplerGL, slots[i]);
+        }
+        break;
+
+        default:
+        {
+            // dummy - combined resource bindings are only available to textures and samplers
         }
         break;
     }
@@ -1070,14 +1160,24 @@ void GLDeferredCommandBuffer::BindTexture(GLTexture& textureGL, std::uint32_t sl
     }
 }
 
-void GLDeferredCommandBuffer::BindImageTexture(const GLTexture& textureGL, std::uint32_t slot)
+void GLDeferredCommandBuffer::BindTextureNative(GLuint texID, GLTextureTarget target, std::uint32_t slot)
+{
+    auto cmd = AllocCommand<GLCmdBindTextureNative>(GLOpcodeBindTextureNative);
+    {
+        cmd->slot       = slot;
+        cmd->id         = texID;
+        cmd->target     = target;
+    }
+}
+
+void GLDeferredCommandBuffer::BindImageTexture(GLuint texID, GLenum internalFormat, std::uint32_t slot)
 {
     auto cmd = AllocCommand<GLCmdBindImageTexture>(GLOpcodeBindImageTexture);
     {
         cmd->unit       = slot;
         cmd->level      = 0;
-        cmd->format     = textureGL.GetGLInternalFormat();
-        cmd->texture    = textureGL.GetID();
+        cmd->format     = internalFormat;
+        cmd->texture    = texID;
     }
 }
 

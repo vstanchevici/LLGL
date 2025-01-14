@@ -121,11 +121,11 @@ void GLShaderProgram::Bind(GLStateManager& stateMngr)
     stateMngr.BindShaderProgram(GetID());
 }
 
-void GLShaderProgram::BindResourceSlots(const GLShaderBindingLayout& bindingLayout)
+void GLShaderProgram::BindResourceSlots(const GLShaderBindingLayout& bindingLayout, const GLShaderBufferInterfaceMap* bufferInterfaceMap)
 {
     if (bindingLayout_ != &bindingLayout)
     {
-        bindingLayout.UniformAndBlockBinding(GetID());
+        bindingLayout.UniformAndBlockBinding(GetID(), bufferInterfaceMap);
         bindingLayout_ = &bindingLayout;
     }
 }
@@ -135,6 +135,13 @@ void GLShaderProgram::QueryInfoLogs(Report& report)
     const bool hasErrors = !GLShaderProgram::GetLinkStatus(GetID());
     std::string log = GLShaderProgram::GetGLProgramLog(GetID());
     report.Reset(std::move(log), hasErrors);
+}
+
+void GLShaderProgram::QueryTexBufferNames(std::set<std::string>& outSamplerBufferNames, std::set<std::string>& outImageBufferNames) const
+{
+    outSamplerBufferNames.clear();
+    outImageBufferNames.clear();
+    GLShaderProgram::QueryTexBufferNames(GetID(), outSamplerBufferNames, outImageBufferNames);
 }
 
 bool GLShaderProgram::GetLinkStatus(GLuint program)
@@ -210,7 +217,7 @@ static void BuildTransformFeedbackVaryingsEXT(GLuint program, std::size_t numVar
     #endif // /!LLGL_GL_ENABLE_OPENGL2X
 }
 
-#ifdef GL_NV_transform_feedback
+#if GL_NV_transform_feedback
 
 static void BuildTransformFeedbackVaryingsNV(GLuint program, std::size_t numVaryings, const char* const* varyings)
 {
@@ -223,12 +230,14 @@ static void BuildTransformFeedbackVaryingsNV(GLuint program, std::size_t numVary
 
     for_range(i, numVaryings)
     {
-        /* Get varying location by its name */
+        /*
+        Get varying location by its name.
+        Silently ignore invalid names since the EXT extension doesn't report errors either
+        and NV extension fails on gl_Position input.
+        */
         GLint location = glGetVaryingLocationNV(program, varyings[i]);
         if (location >= 0)
             varyingLocations.push_back(location);
-        else
-            LLGL_TRAP("stream-output attribute \"%s\" does not specify an active varying in GL shader program (ID=%u)", varyings[i], program);
     }
 
     glTransformFeedbackVaryingsNV(
@@ -256,7 +265,7 @@ void GLShaderProgram::LinkProgramWithTransformFeedbackVaryings(GLuint program, s
             return;
         }
 
-        #ifdef GL_NV_transform_feedback
+        #if GL_NV_transform_feedback
         /* For GL_NV_transform_feedback (Vendor specific) the varyings must be specified AFTER linking */
         if (HasExtension(GLExt::NV_transform_feedback))
         {
@@ -280,23 +289,56 @@ static bool GLQueryActiveAttribs(
     GLuint              program,
     GLenum              attribCountType,
     GLenum              attribNameLengthType,
-    GLint&              numAttribs,
-    GLint&              maxNameLength,
+    GLint&              outNumAttribs,
+    GLint&              outMaxNameLength,
     std::vector<char>&  nameBuffer)
 {
     /* Query number of active attributes */
-    glGetProgramiv(program, attribCountType, &numAttribs);
-    if (numAttribs <= 0)
+    glGetProgramiv(program, attribCountType, &outNumAttribs);
+    if (outNumAttribs <= 0)
         return false;
 
     /* Query maximal name length of all attributes */
-    glGetProgramiv(program, attribNameLengthType, &maxNameLength);
-    if (maxNameLength <= 0)
+    glGetProgramiv(program, attribNameLengthType, &outMaxNameLength);
+    if (outMaxNameLength <= 0)
         return false;
 
-    nameBuffer.resize(maxNameLength, '\0');
+    nameBuffer.resize(outMaxNameLength, '\0');
 
     return true;
+}
+
+static bool GLQueryActiveResources(
+    GLuint              program,
+    GLenum              programInterface,
+    GLint&              outNumResources,
+    GLint&              outMaxNameLength,
+    std::vector<char>&  nameBuffer)
+{
+    #if LLGL_GLEXT_SHADER_STORAGE_BUFFER_OBJECT
+
+    if (!HasExtension(GLExt::ARB_shader_storage_buffer_object) || !HasExtension(GLExt::ARB_program_interface_query))
+        return false;
+
+    /* Query number of shader storage blocks */
+    glGetProgramInterfaceiv(program, programInterface, GL_ACTIVE_RESOURCES, &outNumResources);
+    if (outNumResources <= 0)
+        return false;
+
+    /* Query maximal name length of all shader storage blocks */
+    glGetProgramInterfaceiv(program, programInterface, GL_MAX_NAME_LENGTH, &outMaxNameLength);
+    if (outMaxNameLength <= 0)
+        return false;
+
+    nameBuffer.resize(outMaxNameLength, '\0');
+
+    return true;
+
+    #else // LLGL_GLEXT_SHADER_STORAGE_BUFFER_OBJECT
+
+    return false;
+
+    #endif // /LLGL_GLEXT_SHADER_STORAGE_BUFFER_OBJECT
 }
 
 struct GLMatrixTypeFormat
@@ -426,7 +468,7 @@ static void GLQueryVertexAttributes(GLuint program, ShaderReflection& reflection
         auto location = static_cast<std::uint32_t>(glGetAttribLocation(program, name.c_str()));
 
         /* Insert vertex attribute into list */
-        for (std::uint32_t semanticIndex = 0; semanticIndex < attr.rows; ++semanticIndex)
+        for_range(semanticIndex, attr.rows)
             attributes.push_back({ name, attr.format, semanticIndex, location });
     }
 
@@ -449,8 +491,8 @@ static void GLQueryVertexAttributes(GLuint program, ShaderReflection& reflection
 
     for_range(i, attributes.size())
     {
-        auto& src = attributes[i];
-        auto& dst = reflection.vertex.inputAttribs[i];
+        GLReflectVertexAttribute&   src = attributes[i];
+        VertexAttribute&            dst = reflection.vertex.inputAttribs[i];
 
         dst.name    = std::move(src.name);
         dst.format  = src.format;
@@ -508,7 +550,7 @@ static void GLQueryStreamOutputAttributes(GLuint program, ShaderReflection& refl
             #endif
         }
     }
-    #ifdef GL_NV_transform_feedback
+    #if GL_NV_transform_feedback
     else if (HasExtension(GLExt::NV_transform_feedback))
     {
         /* Query active varyings */
@@ -684,22 +726,11 @@ static void GLQueryStorageBuffers(GLuint program, ShaderReflection& reflection)
 {
     #if LLGL_GLEXT_SHADER_STORAGE_BUFFER_OBJECT
 
-    if (!HasExtension(GLExt::ARB_shader_storage_buffer_object) || !HasExtension(GLExt::ARB_program_interface_query))
-        return;
-
-    /* Query number of shader storage blocks */
     GLint numStorageBlocks = 0;
-    glGetProgramInterfaceiv(program, GL_SHADER_STORAGE_BLOCK, GL_ACTIVE_RESOURCES, &numStorageBlocks);
-    if (numStorageBlocks <= 0)
-        return;
-
-    /* Query maximal name length of all shader storage blocks */
     GLint maxNameLength = 0;
-    glGetProgramInterfaceiv(program, GL_SHADER_STORAGE_BLOCK, GL_MAX_NAME_LENGTH, &maxNameLength);
-    if (maxNameLength <= 0)
+    std::vector<char> blockName;
+    if (!GLQueryActiveResources(program, GL_SHADER_STORAGE_BLOCK, numStorageBlocks, maxNameLength, blockName))
         return;
-
-    std::vector<char> blockName(maxNameLength, 0);
 
     /* Iterate over all shader storage blocks */
     for_range(i, static_cast<GLuint>(numStorageBlocks))
@@ -723,6 +754,9 @@ static void GLQueryStorageBuffers(GLuint program, ShaderReflection& reflection)
             resource.binding.stageFlags = StageFlags::AllStages;
             resource.binding.slot       = LLGL_INVALID_SLOT;
             #endif
+
+            /* Assume SSBOs to have structured read/write access */
+            resource.storageBufferType  = StorageBufferType::RWStructuredBuffer;
         }
         reflection.resources.push_back(resource);
     }
@@ -850,6 +884,48 @@ void GLShaderProgram::QueryReflection(GLuint program, GLenum shaderStage, Shader
     if (shaderStage == GL_COMPUTE_SHADER)
         GLQueryWorkGroupSize(program, reflection);
     #endif
+}
+
+void GLShaderProgram::QueryTexBufferNames(GLuint program, std::set<std::string>& samplerBufferNames, std::set<std::string>& imageBufferNames)
+{
+    /* Query active uniform blocks */
+    std::vector<char> blockName;
+    GLint numUniforms = 0, maxNameLength = 0;
+    if (!GLQueryActiveAttribs(program, GL_ACTIVE_UNIFORMS, GL_ACTIVE_UNIFORM_MAX_LENGTH, numUniforms, maxNameLength, blockName))
+        return;
+
+    for_range(i, static_cast<GLuint>(numUniforms))
+    {
+        /* Get active uniform name */
+        GLsizei nameLength = 0;
+        GLint size = 0;
+        GLenum type = 0;
+        glGetActiveUniform(program, i, maxNameLength, &nameLength, &size, &type, blockName.data());
+        std::string uniformName(blockName.data());
+
+        /* Map sampler buffer and image buffer names to output sets */
+        switch (type)
+        {
+            #if defined(GL_SAMPLER_BUFFER) && defined(GL_INT_SAMPLER_BUFFER) && defined(GL_UNSIGNED_INT_SAMPLER_BUFFER)
+            case GL_SAMPLER_BUFFER:
+            case GL_INT_SAMPLER_BUFFER:
+            case GL_UNSIGNED_INT_SAMPLER_BUFFER:
+                samplerBufferNames.insert(std::move(uniformName));
+                break;
+            #endif
+
+            #if defined(GL_IMAGE_BUFFER) && defined(GL_INT_IMAGE_BUFFER) && defined(GL_UNSIGNED_INT_IMAGE_BUFFER)
+            case GL_IMAGE_BUFFER:
+            case GL_INT_IMAGE_BUFFER:
+            case GL_UNSIGNED_INT_IMAGE_BUFFER:
+                imageBufferNames.insert(std::move(uniformName));
+                break;
+            #endif
+
+            default:
+                break;
+        }
+    }
 }
 
 
