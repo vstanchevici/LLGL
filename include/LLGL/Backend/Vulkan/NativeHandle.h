@@ -95,6 +95,7 @@ struct ResourceNativeHandle
     struct NativeImage
     {
         VkImage                 image;              //!< Primary Vulkan image stored as native VkImage type.
+        VkImageView             imageView;          //!< Current image view.
         VkImageLayout           imageLayout;        //!< Current image layout. This depends on resource transitioning.
         VkFormat                format;             //!< Native Vulkan image format.
         VkExtent3D              extent;             //!< Native Vulkan image extent. Does \e not include array layers.
