@@ -52,6 +52,7 @@ bool VKTexture::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize
     {
         nativeHandleVK->type                    = Vulkan::ResourceNativeType::Image;
         nativeHandleVK->image.image             = GetVkImage();
+        nativeHandleVK->image.imageView         = GetVkImageView();
         nativeHandleVK->image.imageLayout       = GetVkImageLayout();
         nativeHandleVK->image.format            = GetVkFormat();
         nativeHandleVK->image.extent            = GetVkExtent();
