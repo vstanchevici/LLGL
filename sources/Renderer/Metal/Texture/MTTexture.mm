@@ -37,7 +37,7 @@ static MTLTextureUsage GetTextureUsage(const TextureDescriptor& desc)
     if ((desc.bindFlags & BindFlags::Sampled) != 0)
         usage |= MTLTextureUsageShaderRead | MTLTextureUsagePixelFormatView;
     if ((desc.bindFlags & BindFlags::Storage) != 0)
-        usage |= MTLTextureUsageShaderWrite;
+        usage |= MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
     if ((desc.bindFlags & (BindFlags::ColorAttachment | BindFlags::DepthStencilAttachment)) != 0)
         usage |= MTLTextureUsageRenderTarget;
 
@@ -223,7 +223,7 @@ void MTTexture::WriteRegion(const TextureRegion& textureRegion, const ImageView&
     }
 
     /* Replace region of native texture with source image data */
-    auto byteAlignedData = reinterpret_cast<const std::int8_t*>(imageData);
+    auto byteAlignedData = static_cast<const std::int8_t*>(imageData);
 
     for_range(arrayLayer, textureRegion.subresource.numArrayLayers)
     {
@@ -347,7 +347,7 @@ void MTTexture::ReadRegionFromSharedMemory(
     }
     else
     {
-        char* dstImageData = reinterpret_cast<char*>(dstImageView.data);
+        char* dstImageData = static_cast<char*>(dstImageView.data);
 
         for_range(arrayLayer, subresource.numArrayLayers)
         {

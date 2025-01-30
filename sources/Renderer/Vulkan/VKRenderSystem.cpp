@@ -10,12 +10,14 @@
 #include "Ext/VKExtensionLoader.h"
 #include "Ext/VKExtensions.h"
 #include "Ext/VKExtensionRegistry.h"
+#include "LLGL/Format.h"
 #include "Memory/VKDeviceMemory.h"
 #include "../RenderSystemUtils.h"
 #include "../TextureUtils.h"
 #include "../CheckedCast.h"
 #include "../../Core/CoreUtils.h"
 #include "../../Core/Vendor.h"
+#include "../../Core/ImageUtils.h"
 #include "VKCore.h"
 #include "VKTypes.h"
 #include "VKInitializers.h"
@@ -300,19 +302,49 @@ Texture* VKRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, con
     /* Determine size of image for staging buffer */
     const std::uint32_t imageSize       = NumMipTexels(textureDesc, 0);
     const std::size_t   initialDataSize = GetMemoryFootprint(textureDesc.format, imageSize);
+    const std::uint32_t bytesPerPixel   = static_cast<std::uint32_t>(GetMemoryFootprint(textureDesc.format, 1));
+    const auto&         formatAttribs   = GetFormatAttribs(textureDesc.format);
+    const Extent3D      extent          = CalcTextureExtent(textureDesc.type, textureDesc.extent, textureDesc.arrayLayers);
+
+    const bool isCompressed = ((formatAttribs.flags & FormatFlags::IsCompressed) != 0);
 
     /* Set up initial image data */
     const void* initialData = nullptr;
     DynamicByteArray intermediateData;
 
+    std::uint32_t srcRowStride = extent.width * bytesPerPixel;
+
     if (initialImage != nullptr)
     {
+        const ImageView& srcImageView = *initialImage;
+
         /* Check if image data must be converted */
-        const auto& formatAttribs = GetFormatAttribs(textureDesc.format);
-        if (formatAttribs.bitSize > 0 && (formatAttribs.flags & FormatFlags::IsCompressed) == 0)
+        if (!isCompressed)
         {
-            /* Convert image format (will be null if no conversion is necessary) */
-            intermediateData = ConvertImageBuffer(*initialImage, formatAttribs.format, formatAttribs.dataType, LLGL_MAX_THREAD_COUNT);
+            const std::uint32_t srcBytesPerPixel = static_cast<std::uint32_t>(GetMemoryFootprint(srcImageView.format, srcImageView.dataType, 1));
+            srcRowStride = (srcImageView.rowStride > 0 ? srcImageView.rowStride : extent.width * srcBytesPerPixel);
+
+            /* Check if amount of padding memory is small enough to justify a larger GPU buffer upload */
+            bool rowStrideNeedsConversion = (srcImageView.rowStride != 0 && srcImageView.rowStride != extent.width * srcBytesPerPixel);
+            if (rowStrideNeedsConversion)
+            {
+                const std::size_t dataSizeWithPadding = srcImageView.dataSize / srcBytesPerPixel * bytesPerPixel;
+
+                const bool isPaddingLessThan50Percent   = (dataSizeWithPadding < initialDataSize + initialDataSize/2);
+                const bool isRowStridePixelSizeAligned  = (srcImageView.rowStride % bytesPerPixel == 0);
+
+                if (isRowStridePixelSizeAligned && isPaddingLessThan50Percent)
+                    rowStrideNeedsConversion = false;
+            }
+
+            if (srcImageView.format != formatAttribs.format ||
+                srcImageView.dataType != formatAttribs.dataType ||
+                rowStrideNeedsConversion)
+            {
+                /* Convert image format (will be null if no conversion is necessary) */
+                intermediateData = ConvertImageBuffer(srcImageView, formatAttribs.format, formatAttribs.dataType, extent, LLGL_MAX_THREAD_COUNT);
+                srcRowStride = extent.width * bytesPerPixel;
+            }
         }
 
         if (intermediateData)
@@ -360,7 +392,12 @@ Texture* VKRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, con
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT
         );
 
-        VKDeviceBuffer stagingBuffer = CreateStagingBufferAndInitialize(stagingCreateInfo, initialData, initialDataSize);
+        VKDeviceBuffer stagingBuffer =
+        (
+            isCompressed
+                ? CreateStagingBufferAndInitialize(stagingCreateInfo, initialData, initialDataSize)
+                : CreateTextureStagingBufferAndInitialize(stagingCreateInfo, initialData, initialDataSize, extent, srcRowStride, bytesPerPixel)
+        );
 
         /* Copy staging buffer into hardware texture, then transfer image into sampling-ready state */
         VkCommandBuffer cmdBuffer = AllocCommandBuffer();
@@ -369,13 +406,17 @@ Texture* VKRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, con
 
             textureVK->TransitionImageLayout(context_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, true);
 
+            /* Determine row length (in pixels) for image upload with padding */
+            const std::uint32_t rowLength = (bytesPerPixel > 0 ? srcRowStride / bytesPerPixel : 0);
+
             context_.CopyBufferToImage(
                 stagingBuffer.GetVkBuffer(),
                 textureVK->GetVkImage(),
                 textureVK->GetVkFormat(),
                 VkOffset3D{ 0, 0, 0 },
                 textureVK->GetVkExtent(),
-                subresource
+                subresource,
+                rowLength
             );
 
             textureVK->TransitionImageLayout(context_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);
@@ -429,24 +470,29 @@ void VKRenderSystem::WriteTexture(Texture& texture, const TextureRegion& texture
     auto& textureVK = LLGL_CAST(VKTexture&, texture);
 
     /* Determine size of image for staging buffer */
-    const Offset3D&             offset          = textureRegion.offset;
-    const Extent3D&             extent          = textureRegion.extent;
     const TextureSubresource&   subresource     = textureRegion.subresource;
+    const Offset3D              offset          = CalcTextureOffset(textureVK.GetType(), textureRegion.offset, subresource.baseArrayLayer);
+    const Extent3D              extent          = CalcTextureExtent(textureVK.GetType(), textureRegion.extent, subresource.numArrayLayers);
     const Format                format          = VKTypes::Unmap(textureVK.GetVkFormat());
 
     VkImage                     image           = textureVK.GetVkImage();
-    const std::uint32_t         imageSize       = extent.width * extent.height * extent.depth * subresource.numArrayLayers;
+    const std::uint32_t         imageSize       = extent.width * extent.height * extent.depth;
     const void*                 imageData       = nullptr;
     const VkDeviceSize          imageDataSize   = static_cast<VkDeviceSize>(GetMemoryFootprint(format, imageSize));
+    const std::uint32_t         bytesPerPixel   = static_cast<std::uint32_t>(GetMemoryFootprint(format, 1));
 
     /* Check if image data must be converted */
     DynamicByteArray intermediateData;
 
+    std::uint32_t srcRowStride = srcImageView.rowStride > 0 ? srcImageView.rowStride : extent.width * bytesPerPixel;
+
     const auto& formatAttribs = GetFormatAttribs(format);
-    if (formatAttribs.bitSize > 0 && (formatAttribs.flags & FormatFlags::IsCompressed) == 0)
+    if ((formatAttribs.flags & FormatFlags::IsCompressed) == 0 &&
+        (formatAttribs.format != srcImageView.format || formatAttribs.dataType != srcImageView.dataType))
     {
         /* Convert image format (will be null if no conversion is necessary) */
-        intermediateData = ConvertImageBuffer(srcImageView, formatAttribs.format, formatAttribs.dataType, LLGL_MAX_THREAD_COUNT);
+        intermediateData = ConvertImageBuffer(srcImageView, formatAttribs.format, formatAttribs.dataType, extent, LLGL_MAX_THREAD_COUNT);
+        srcRowStride = extent.width * bytesPerPixel;
     }
 
     if (intermediateData)
@@ -477,19 +523,25 @@ void VKRenderSystem::WriteTexture(Texture& texture, const TextureRegion& texture
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT // <-- TODO: support read/write mapping //GetStagingVkBufferUsageFlags(bufferDesc.cpuAccessFlags)
     );
 
-    VKDeviceBuffer stagingBuffer = CreateStagingBufferAndInitialize(stagingCreateInfo, imageData, imageDataSize);
+    VKDeviceBuffer stagingBuffer =
+    (
+        IsCompressedFormat(format)
+            ? CreateStagingBufferAndInitialize(stagingCreateInfo, imageData, imageDataSize)
+            : CreateTextureStagingBufferAndInitialize(stagingCreateInfo, imageData, imageDataSize, extent, srcRowStride, bytesPerPixel)
+    );
 
     /* Copy staging buffer into hardware texture, then transfer image into sampling-ready state */
     VkCommandBuffer cmdBuffer = AllocCommandBuffer();
     {
         VkImageLayout oldLayout = textureVK.TransitionImageLayout(context_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, subresource, true);
 
+        /* Use input offset and extent (instead of transient dimensions) because copy operation takes subresource parameters into account */
         context_.CopyBufferToImage(
             stagingBuffer.GetVkBuffer(),
             image,
             textureVK.GetVkFormat(),
-            VkOffset3D{ offset.x, offset.y, offset.z },
-            VkExtent3D{ extent.width, extent.height, extent.depth },
+            VkOffset3D{ textureRegion.offset.x, textureRegion.offset.y, textureRegion.offset.z },
+            VkExtent3D{ textureRegion.extent.width, textureRegion.extent.height, textureRegion.extent.depth },
             subresource
         );
 
@@ -506,14 +558,14 @@ void VKRenderSystem::ReadTexture(Texture& texture, const TextureRegion& textureR
     auto& textureVK = LLGL_CAST(VKTexture&, texture);
 
     /* Determine size of image for staging buffer */
-    const Offset3D              offset          = CalcTextureOffset(textureVK.GetType(), textureRegion.offset);
-    const Extent3D              extent          = CalcTextureExtent(textureVK.GetType(), textureRegion.extent);
     const TextureSubresource&   subresource     = textureRegion.subresource;
+    const Offset3D              offset          = CalcTextureOffset(textureVK.GetType(), textureRegion.offset, subresource.baseArrayLayer);
+    const Extent3D              extent          = CalcTextureExtent(textureVK.GetType(), textureRegion.extent, subresource.numArrayLayers);
     const Format                format          = VKTypes::Unmap(textureVK.GetVkFormat());
     const FormatAttributes&     formatAttribs   = GetFormatAttribs(format);
 
     VkImage                     image           = textureVK.GetVkImage();
-    const std::uint32_t         imageSize       = extent.width * extent.height * extent.depth * subresource.numArrayLayers;
+    const std::uint32_t         imageSize       = extent.width * extent.height * extent.depth;
     const VkDeviceSize          imageDataSize   = static_cast<VkDeviceSize>(GetMemoryFootprint(format, imageSize));
 
     /* Create staging buffer */
@@ -526,12 +578,13 @@ void VKRenderSystem::ReadTexture(Texture& texture, const TextureRegion& textureR
     {
         VkImageLayout oldLayout = textureVK.TransitionImageLayout(context_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, subresource, true);
 
+        /* Use input offset and extent (instead of transient dimensions) because copy operation takes subresource parameters into account */
         context_.CopyImageToBuffer(
             image,
             stagingBuffer.GetVkBuffer(),
             textureVK.GetVkFormat(),
-            VkOffset3D{ offset.x, offset.y, offset.z },
-            VkExtent3D{ extent.width, extent.height, extent.depth },
+            VkOffset3D{ textureRegion.offset.x, textureRegion.offset.y, textureRegion.offset.z },
+            VkExtent3D{ textureRegion.extent.width, textureRegion.extent.height, textureRegion.extent.depth },
             subresource
         );
 
@@ -704,7 +757,7 @@ bool VKRenderSystem::GetNativeHandle(void* nativeHandle, std::size_t nativeHandl
 {
     if (nativeHandle != nullptr && nativeHandleSize == sizeof(Vulkan::RenderSystemNativeHandle))
     {
-        auto* nativeHandleVK = reinterpret_cast<Vulkan::RenderSystemNativeHandle*>(nativeHandle);
+        auto* nativeHandleVK = static_cast<Vulkan::RenderSystemNativeHandle*>(nativeHandle);
         nativeHandleVK->instance        = instance_.Get();
         nativeHandleVK->physicalDevice  = physicalDevice_.GetVkPhysicalDevice();
         nativeHandleVK->device          = device_.GetVkDevice();
@@ -957,6 +1010,45 @@ VKDeviceBuffer VKRenderSystem::CreateStagingBufferAndInitialize(
     /* Copy initial data to buffer memory */
     if (data != nullptr && dataSize > 0)
         device_.WriteBuffer(stagingBuffer, data, dataSize);
+
+    return stagingBuffer;
+}
+
+VKDeviceBuffer VKRenderSystem::CreateTextureStagingBufferAndInitialize(
+    const VkBufferCreateInfo&   createInfo,
+    const void*                 data,
+    VkDeviceSize                dataSize,
+    const Extent3D&             extent,
+    std::uint32_t               srcRowStride,
+    std::uint32_t               bpp)
+{
+    /* Allocate staging buffer */
+    VKDeviceBuffer stagingBuffer = CreateStagingBuffer(createInfo);
+
+    /* Copy initial data to buffer memory */
+    if (data != nullptr && dataSize > 0)
+    {
+        if (VKDeviceMemoryRegion* region = stagingBuffer.GetMemoryRegion())
+        {
+            const std::uint32_t dstRowStride    = extent.width * bpp;
+            const std::uint32_t dstLayerStride  = extent.height * dstRowStride;
+            const std::uint64_t dstSize         = extent.depth * dstLayerStride;
+
+            const std::uint32_t srcLayerStride  = extent.height * srcRowStride;
+
+            /* Map buffer memory to host memory */
+            VKDeviceMemory* deviceMemory = region->GetParentChunk();
+            if (void* memory = deviceMemory->Map(device_, region->GetOffset(), dataSize))
+            {
+                const char* src = static_cast<const char*>(data);
+                char* dst = static_cast<char*>(memory);
+
+                BitBlit(extent, bpp, dst, dstRowStride, dstLayerStride, src, srcRowStride, srcLayerStride);
+
+                deviceMemory->Unmap(device_);
+            }
+        }
+    }
 
     return stagingBuffer;
 }

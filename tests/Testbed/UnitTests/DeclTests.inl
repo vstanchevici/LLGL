@@ -25,6 +25,7 @@ DECL_RITEST( ContainerStringLiteral );
 DECL_RITEST( ContainerStringOperators );
 DECL_RITEST( ParseUtil );
 DECL_RITEST( ImageConversions );
+DECL_RITEST( ImageStrides );
 
 #undef DECL_RITEST
 
@@ -65,6 +66,7 @@ DECL_TEST( PipelineCaching );
 DECL_TEST( ShaderErrors );
 DECL_TEST( SamplerBuffer );
 DECL_TEST( NativeHandle );
+DECL_TEST( BarrierReadAfterWrite );
 
 // Rendering tests
 DECL_TEST( DepthBuffer );

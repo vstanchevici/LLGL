@@ -19,6 +19,7 @@
 #include <LLGL/Utils/ForRange.h>
 #include <LLGL/Platform/NativeHandle.h>
 #include <LLGL/Backend/Direct3D12/NativeHandle.h>
+#include <LLGL/Container/DynamicArray.h>
 #include <limits.h>
 
 #include "Shader/D3D12BuiltinShaderFactory.h"
@@ -260,7 +261,7 @@ void D3D12RenderSystem::ReadTexture(Texture& texture, const TextureRegion& textu
     HRESULT hr = readbackBuffer->Map(0, nullptr, &mappedData);
     DXThrowIfFailed(hr, "failed to map D3D12 texture copy resource");
 
-    const char* srcData = reinterpret_cast<const char*>(mappedData);
+    const char* srcData = static_cast<const char*>(mappedData);
     ImageView intermediateSrcView{ formatAttribs.format, formatAttribs.dataType, srcData, layerStride };
 
     if (isStencilOnlyFormat)
@@ -280,8 +281,8 @@ void D3D12RenderSystem::ReadTexture(Texture& texture, const TextureRegion& textu
         RenderSystem::CopyTextureImageData(intermediateDstView, intermediateSrcView, numTexelsPerLayer, extent.width, rowStride);
 
         /* Move destination image pointer to next layer */
-        intermediateDstView.data = reinterpret_cast<char*>(intermediateDstView.data) + layerSize;
-        intermediateSrcView.data = reinterpret_cast<const char*>(intermediateSrcView.data) + layerStride;
+        intermediateDstView.data = static_cast<char*>(intermediateDstView.data) + layerSize;
+        intermediateSrcView.data = static_cast<const char*>(intermediateSrcView.data) + layerStride;
     }
 
     /* Unmap buffer */
@@ -436,7 +437,7 @@ bool D3D12RenderSystem::GetNativeHandle(void* nativeHandle, std::size_t nativeHa
 {
     if (nativeHandle != nullptr && nativeHandleSize == sizeof(Direct3D12::RenderSystemNativeHandle))
     {
-        auto* nativeHandleD3D = reinterpret_cast<Direct3D12::RenderSystemNativeHandle*>(nativeHandle);
+        auto* nativeHandleD3D = static_cast<Direct3D12::RenderSystemNativeHandle*>(nativeHandle);
         nativeHandleD3D->factory = factory_.Get();
         nativeHandleD3D->factory->AddRef();
         nativeHandleD3D->device = device_.GetNative();
@@ -457,7 +458,7 @@ ComPtr<IDXGISwapChain1> D3D12RenderSystem::CreateDXSwapChain(
     std::size_t                     nativeWindowHandleSize)
 {
     LLGL_ASSERT(nativeWindowHandleSize == sizeof(NativeHandle));
-    auto* nativeWindowHandlePtr = reinterpret_cast<const NativeHandle*>(nativeWindowHandle);
+    auto* nativeWindowHandlePtr = static_cast<const NativeHandle*>(nativeWindowHandle);
 
     ComPtr<IDXGISwapChain1> swapChain;
 
@@ -850,7 +851,6 @@ HRESULT D3D12RenderSystem::UpdateTextureSubresourceFromImage(
     const Format            format          = textureD3D.GetFormat();
     const FormatAttributes& formatAttribs   = GetFormatAttribs(format);
 
-    const Extent3D                      srcExtent   = CalcTextureExtent(textureD3D.GetType(), region.extent, subresource.numArrayLayers);
     const SubresourceCPUMappingLayout   dataLayout  = CalcSubresourceCPUMappingLayout(format, region.extent, subresource.numArrayLayers, imageView.format, imageView.dataType);
 
     if (imageView.dataSize < dataLayout.imageSize)
@@ -867,12 +867,17 @@ HRESULT D3D12RenderSystem::UpdateTextureSubresourceFromImage(
     DynamicByteArray intermediateData;
     const void* srcData = imageView.data;
 
+    std::uint32_t srcRowStride      = imageView.rowStride > 0 ? imageView.rowStride                        : dataLayout.rowStride;
+    std::uint32_t srcLayerStride    = imageView.rowStride > 0 ? imageView.rowStride * region.extent.height : dataLayout.layerStride;
+
     if ((formatAttribs.flags & FormatFlags::IsCompressed) == 0 &&
         (formatAttribs.format != imageView.format || formatAttribs.dataType != imageView.dataType))
     {
         /* Convert image data (e.g. from RGB to RGBA), and redirect initial data to new buffer */
-        intermediateData    = ConvertImageBuffer(imageView, formatAttribs.format, formatAttribs.dataType, LLGL_MAX_THREAD_COUNT);
+        intermediateData    = ConvertImageBuffer(imageView, formatAttribs.format, formatAttribs.dataType, region.extent, LLGL_MAX_THREAD_COUNT);
         srcData             = intermediateData.get();
+        srcRowStride        = dataLayout.rowStride;
+        srcLayerStride      = dataLayout.layerStride;
         LLGL_ASSERT(intermediateData.size() == dataLayout.subresourceSize);
     }
 
@@ -880,11 +885,12 @@ HRESULT D3D12RenderSystem::UpdateTextureSubresourceFromImage(
     D3D12_SUBRESOURCE_DATA subresourceData;
     {
         subresourceData.pData       = srcData;
-        subresourceData.RowPitch    = dataLayout.rowStride;
-        subresourceData.SlicePitch  = dataLayout.layerStride;
+        subresourceData.RowPitch    = srcRowStride;
+        subresourceData.SlicePitch  = srcLayerStride;
     }
 
-    const bool isFullRegion = (region.offset == Offset3D{} && srcExtent == mipExtent);
+    const Extent3D srcExtent    = CalcTextureExtent(textureD3D.GetType(), region.extent, subresource.numArrayLayers);
+    const bool     isFullRegion = (region.offset == Offset3D{} && srcExtent == mipExtent);
     if (isFullRegion)
         textureD3D.UpdateSubresource(subresourceContext, subresourceData, region.subresource);
     else

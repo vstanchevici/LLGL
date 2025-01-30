@@ -10,6 +10,7 @@
 
 
 #include <LLGL/Utils/Color.h>
+#include <LLGL/Trap.h>
 
 
 namespace LLGL
@@ -142,11 +143,8 @@ class LLGL_EXPORT Color<T, 3u>
         \throws std::out_of_range If the specified component index is out of range (Only if the macro 'LLGL_DEBUG' is defined).
         */
         T& operator [] (std::size_t component)
-        {
-            #ifdef LLGL_DEBUG
-            if (component >= Color<T, 3>::components)
-                throw std::out_of_range("color component index out of range (must be 0, 1, or 2)");
-            #endif
+        {   
+            LLGL_VERIFY((component < Color<T, 3>::components), OutOfRange);
             return *((&r) + component);
         }
 
@@ -157,10 +155,7 @@ class LLGL_EXPORT Color<T, 3u>
         */
         const T& operator [] (std::size_t component) const
         {
-            #ifdef LLGL_DEBUG
-            if (component >= Color<T, 3>::components)
-                throw std::out_of_range("color component index out of range (must be 0, 1, or 2)");
-            #endif
+            LLGL_VERIFY((component < Color<T, 3>::components), OutOfRange);
             return *((&r) + component);
         }
 

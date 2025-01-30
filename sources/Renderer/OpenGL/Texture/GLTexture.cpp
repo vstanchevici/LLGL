@@ -22,6 +22,7 @@
 #include "../../TextureUtils.h"
 #include "../../../Core/Exception.h"
 #include "../../../Core/CoreUtils.h"
+#include <LLGL/Format.h>
 #include <LLGL/Utils/ForRange.h>
 #include <LLGL/Backend/OpenGL/NativeHandle.h>
 
@@ -628,7 +629,7 @@ static void GLReadPixelsFromTexture(
     const GLenum formatGL   = GLTypes::Map(dstImageView.format);
     const GLenum dataTypeGL = GLTypes::Map(dstImageView.dataType);
 
-    char* dstImageData = reinterpret_cast<char*>(dstImageView.data);
+    char* dstImageData = static_cast<char*>(dstImageView.data);
 
     /* Create temporary FBO for source texture to read from GL_READ_FRAMEBUFFER in read pixel operator */
     GLFramebuffer readFBO;
@@ -866,33 +867,40 @@ void GLTexture::TextureSubImage(const TextureRegion& region, const ImageView& sr
 {
     if (!IsRenderbuffer())
     {
-        #if LLGL_GLEXT_DIRECT_STATE_ACCESS
-        if (HasExtension(GLExt::ARB_direct_state_access))
+        const std::uint32_t bytesPerPixel = GetMemoryFootprint(srcImageView.format, srcImageView.dataType, 1);
+        const std::uint32_t srcRowStride = bytesPerPixel > 0 ? srcImageView.rowStride / bytesPerPixel : 0;
+
+        GLStateManager::Get().SetPixelStoreUnpack(srcRowStride, region.extent.height, 1);
         {
-            /* Transfer image data directly to GL texture */
-            GLTextureSubImage(GetID(), GetType(), region, srcImageView, GetGLInternalFormat());
-        }
-        else
-        #endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
-        {
-            const GLTextureTarget target = GLStateManager::GetTextureTarget(GetType());
-            if (restoreBoundTexture)
+            #if LLGL_GLEXT_DIRECT_STATE_ACCESS
+            if (HasExtension(GLExt::ARB_direct_state_access))
             {
-                /* Bind texture and transfer image data to GL texture, then restore previously bound texture with state manager */
-                GLStateManager::Get().PushBoundTexture(target);
+                /* Transfer image data directly to GL texture */
+                GLTextureSubImage(GetID(), GetType(), region, srcImageView, GetGLInternalFormat());
+            }
+            else
+            #endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
+            {
+                const GLTextureTarget target = GLStateManager::GetTextureTarget(GetType());
+                if (restoreBoundTexture)
                 {
+                    /* Bind texture and transfer image data to GL texture, then restore previously bound texture with state manager */
+                    GLStateManager::Get().PushBoundTexture(target);
+                    {
+                        GLStateManager::Get().BindTexture(target, GetID());
+                        GLTexSubImage(GetType(), region, srcImageView, GetGLInternalFormat());
+                    }
+                    GLStateManager::Get().PopBoundTexture();
+                }
+                else
+                {
+                    /* Bind texture and transfer image data to GL texture */
                     GLStateManager::Get().BindTexture(target, GetID());
                     GLTexSubImage(GetType(), region, srcImageView, GetGLInternalFormat());
                 }
-                GLStateManager::Get().PopBoundTexture();
-            }
-            else
-            {
-                /* Bind texture and transfer image data to GL texture */
-                GLStateManager::Get().BindTexture(target, GetID());
-                GLTexSubImage(GetType(), region, srcImageView, GetGLInternalFormat());
             }
         }
+        GLStateManager::Get().SetPixelStoreUnpack(0, 0, 1);
     }
 }
 
@@ -904,10 +912,11 @@ static void GLGetTextureSubImage(
     const MutableImageView&     dstImageView)
 {
     /* Translate source region into actual texture dimensions */
-    const auto type         = textureGL.GetType();
-    const auto offset       = CalcTextureOffset(type, region.offset, region.subresource.baseArrayLayer);
-    const auto extent       = CalcTextureExtent(type, region.extent, region.subresource.numArrayLayers);
-    const auto mipLevel     = static_cast<GLint>(region.subresource.baseMipLevel);
+    const auto type             = textureGL.GetType();
+    const auto offset           = CalcTextureOffset(type, region.offset, region.subresource.baseArrayLayer);
+    const auto extent           = CalcTextureExtent(type, region.extent, region.subresource.numArrayLayers);
+    const auto mipLevel         = static_cast<GLint>(region.subresource.baseMipLevel);
+    const bool isIntegerFormat  = IsIntegerFormat(textureGL.GetFormat());
 
     /* Get image data from texture region with native GL command */
     glGetTextureSubImage(
@@ -919,7 +928,7 @@ static void GLGetTextureSubImage(
         static_cast<GLsizei>(extent.width),
         static_cast<GLsizei>(extent.height),
         static_cast<GLsizei>(extent.depth),
-        GLTypes::Map(dstImageView.format, IsIntDataType(dstImageView.dataType)),
+        GLTypes::Map(dstImageView.format, isIntegerFormat),
         GLTypes::Map(dstImageView.dataType),
         static_cast<GLsizei>(dstImageView.dataSize),
         dstImageView.data
@@ -940,6 +949,7 @@ static void GLGetTexImage(
     std::size_t             numTexels)
 {
     const GLenum targetGL = GLStateManager::ToGLTextureTarget(target);
+    const bool isIntegerFormat = IsIntegerFormat(GLTypes::UnmapFormat(internalFormat));
 
     GLStateManager::Get().BindTexture(target, textureID);
 
@@ -980,7 +990,7 @@ static void GLGetTexImage(
         }
 
         /* Copy stencil values into output buffer */
-        std::uint8_t* dst = reinterpret_cast<std::uint8_t*>(dstImageView.data);
+        std::uint8_t* dst = static_cast<std::uint8_t*>(dstImageView.data);
         for_range(i, numTexels)
             dst[i] = intermediateDSData[i].stencil;
 
@@ -996,14 +1006,14 @@ static void GLGetTexImage(
         {
             /* Only glGetTextureImage() accepts the generic GL_TEXTURE_CUBE_MAP target, so query each cube face individually when using glTexImage() */
             const std::size_t cubeFacePixelStride = dstImageView.dataSize / 6; //TODO: calculate required stride independently of input 'dataSize'
-            char* dstImageData = reinterpret_cast<char*>(dstImageView.data);
+            char* dstImageData = static_cast<char*>(dstImageView.data);
             for_range(cubeFaceIndex, 6)
             {
                 GLenum cubeFaceTargetGL = GLTypes::ToTextureCubeMap(cubeFaceIndex);
                 glGetTexImage(
                     cubeFaceTargetGL,
                     mipLevel,
-                    GLTypes::Map(dstImageView.format, IsIntDataType(dstImageView.dataType)),
+                    GLTypes::Map(dstImageView.format, isIntegerFormat),
                     GLTypes::Map(dstImageView.dataType),
                     dstImageData
                 );
@@ -1015,7 +1025,7 @@ static void GLGetTexImage(
             glGetTexImage(
                 targetGL,
                 mipLevel,
-                GLTypes::Map(dstImageView.format, IsIntDataType(dstImageView.dataType)),
+                GLTypes::Map(dstImageView.format, isIntegerFormat),
                 GLTypes::Map(dstImageView.dataType),
                 dstImageView.data
             );
@@ -1032,6 +1042,7 @@ static void GLGetTextureImage(
 {
     /* Get texture type and texture unit target */
     const TextureType type = textureGL.GetType();
+    const bool isIntegerFormat = IsIntegerFormat(textureGL.GetFormat());
 
     /* Translate source region into actual texture dimensions */
     const Offset3D offset = CalcTextureOffset(type, region.offset, region.subresource.baseArrayLayer);
@@ -1095,7 +1106,7 @@ static void GLGetTextureImage(
             glGetTextureImage(
                 stagingTextureID,
                 0,
-                GLTypes::Map(dstImageView.format, IsIntDataType(dstImageView.dataType)),
+                GLTypes::Map(dstImageView.format, isIntegerFormat),
                 GLTypes::Map(dstImageView.dataType),
                 static_cast<GLsizei>(dstImageView.dataSize),
                 dstImageView.data
@@ -1122,7 +1133,7 @@ static void GLGetTextureImage(
             glGetTextureImage(
                 srcTextureID,
                 mipLevel,
-                GLTypes::Map(dstImageView.format, IsIntDataType(dstImageView.dataType)),
+                GLTypes::Map(dstImageView.format, isIntegerFormat),
                 GLTypes::Map(dstImageView.dataType),
                 static_cast<GLsizei>(dstImageView.dataSize),
                 dstImageView.data
@@ -1265,6 +1276,10 @@ void GLTexture::AllocTextureStorage(const TextureDescriptor& textureDesc, const 
         intermediateImageView = *initialImage;
         intermediateImageView.format = MapSwizzleImageFormat(initialImage->format);
         initialImage = &intermediateImageView;
+
+        const std::uint32_t bytesPerPixel = GetMemoryFootprint(initialImage->format, initialImage->dataType, 1);
+        const std::uint32_t srcRowStride = bytesPerPixel > 0 ? initialImage->rowStride / bytesPerPixel : 0;
+        GLStateManager::Get().SetPixelStoreUnpack(srcRowStride, textureDesc.extent.height, 1);
     }
 
     /* Build texture storage and upload image dataa */
@@ -1291,9 +1306,13 @@ void GLTexture::AllocTextureStorage(const TextureDescriptor& textureDesc, const 
     InitializeGLTextureSwizzleWithFormat(GetType(), swizzleFormat_, {}, true);
     #endif
 
-    /* Generate MIP-maps if enabled */
-    if (initialImage != nullptr && MustGenerateMipsOnCreate(textureDesc))
-        GLMipGenerator::Get().GenerateMips(textureDesc.type);
+    if (initialImage != nullptr) {
+        GLStateManager::Get().SetPixelStoreUnpack(0, 0, 1);
+
+        /* Generate MIP-maps if enabled */
+        if (MustGenerateMipsOnCreate(textureDesc))
+            GLMipGenerator::Get().GenerateMips(textureDesc.type);
+    }
 }
 
 void GLTexture::AllocRenderbufferStorage(const TextureDescriptor& textureDesc)

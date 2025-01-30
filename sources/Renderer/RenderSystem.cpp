@@ -127,7 +127,7 @@ RenderSystemPtr RenderSystem::Load(const RenderSystemDescriptor& renderSystemDes
     if (module->BuildID() != LLGL_BUILD_ID)
         return ReportException(report, "build ID mismatch in render system module");
 
-    #if LLGL_ENABLE_EXCEPTIONS
+    #if LLGL_EXCEPTIONS_SUPPORTED
     try
     #endif
     {
@@ -160,13 +160,13 @@ RenderSystemPtr RenderSystem::Load(const RenderSystemDescriptor& renderSystemDes
 
         return renderSystem;
     }
-    #if LLGL_ENABLE_EXCEPTIONS
+    #if LLGL_EXCEPTIONS_SUPPORTED
     catch (const std::exception& e)
     {
         /* Throw with new exception, otherwise the exception's v-table will be corrupted since it's part of the module */
         return ReportException(report, e.what());
     }
-    #endif // /LLGL_ENABLE_EXCEPTIONS
+    #endif // /LLGL_EXCEPTIONS_SUPPORTED
 
     #endif // /LLGL_BUILD_STATIC_LIB
 }
@@ -323,8 +323,8 @@ static void CopyRowAlignedData(void* dstData, std::size_t dstSize, std::size_t d
     LLGL_ASSERT(dstStride > 0);
     LLGL_ASSERT(dstStride <= srcStride, "dstStride (%u) is not less than or equal to srcStride (%u)", dstStride, srcStride);
 
-    auto dst = reinterpret_cast<char*>(dstData);
-    auto src = reinterpret_cast<const char*>(srcData);
+    auto dst = static_cast<char*>(dstData);
+    auto src = static_cast<const char*>(srcData);
 
     for (char* dstEnd = dst + dstSize; dst < dstEnd; dst += dstStride, src += srcStride)
         ::memcpy(dst, src, dstStride);
