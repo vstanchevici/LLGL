@@ -5,11 +5,13 @@ OUTPUT_DIR="$SOURCE_DIR/build_macos"
 CLEAR_CACHE=0
 ENABLE_NULL="OFF"
 ENABLE_METAL="ON"
+ENABLE_VULKAN="OFF"
 ENABLE_OPENGL="OFF"
 ENABLE_EXAMPLES="ON"
 ENABLE_TESTS="ON"
 ENABLE_WRAPPER_C99="ON"
 BUILD_TYPE="Release"
+UNITY_BUILD="OFF"
 PROJECT_ONLY=0
 STATIC_LIB="OFF"
 VERBOSE=0
@@ -34,9 +36,11 @@ print_help()
     echo "  -h, --help ................ Print this help documentation and exit"
     echo "  -p, --project-only ........ Build project solution only (no compilation)"
     echo "  -s, --static-lib .......... Build static lib (default is shared lib)"
+    echo "  -u, --unity-build ......... Batches up to 32 source files in a unity build"
     echo "  -v, --verbose ............. Print additional information"
     echo "  --null .................... Include Null renderer"
     echo "  --gl ...................... Include OpenGL renderer"
+    echo "  --vk ...................... Include Vulkan renderer (requires MoltenVK)"
     echo "  --no-examples ............. Exclude example projects"
     echo "  --no-tests ................ Exclude test projects"
     echo "  --no-wrapper .............. Exclude C99 wrapper"
@@ -62,12 +66,16 @@ for ARG in "$@"; do
         PROJECT_ONLY=1
     elif [ "$ARG" = "-s" ] || [ "$ARG" = "--static-lib" ]; then
         STATIC_LIB="ON"
+    elif [ "$ARG" = "-u" ] || [ "$ARG" = "--unity-build" ]; then
+        UNITY_BUILD="ON"
     elif [ "$ARG" = "-v" ] || [ "$ARG" = "--verbose" ]; then
         VERBOSE=1
     elif [ "$ARG" = "--null" ]; then
         ENABLE_NULL="ON"
     elif [ "$ARG" = "--gl" ]; then
         ENABLE_OPENGL="ON"
+    elif [ "$ARG" = "--vk" ]; then
+        ENABLE_VULKAN="ON"
     elif [ "$ARG" = "--no-examples" ]; then
         ENABLE_EXAMPLES="OFF"
     elif [ "$ARG" = "--no-tests" ]; then
@@ -95,6 +103,7 @@ if [ $LEGACY -ne 0 ]; then
     # Legacy mode only supports GL2.x
     ENABLE_OPENGL="ON"
     ENABLE_METAL="OFF"
+    ENABLE_VULKAN="OFF"
 
     PREFERRED_CLANG_VERSIONS=(15 14 13 12 11 16 17)
     KNOWN_BAD_VERSIONS=(16 17)
@@ -180,11 +189,13 @@ fi
 OPTIONS=(
     -DLLGL_BUILD_RENDERER_NULL=$ENABLE_NULL
     -DLLGL_BUILD_RENDERER_OPENGL=$ENABLE_OPENGL
+    -DLLGL_BUILD_RENDERER_VULKAN=$ENABLE_VULKAN
     -DLLGL_BUILD_RENDERER_METAL=$ENABLE_METAL
     -DLLGL_BUILD_EXAMPLES=$ENABLE_EXAMPLES
     -DLLGL_BUILD_TESTS=$ENABLE_TESTS
     -DLLGL_BUILD_STATIC_LIB=$STATIC_LIB
     -DLLGL_BUILD_WRAPPER_C99=$ENABLE_WRAPPER_C99
+    -DLLGL_UNITY_BUILD=$UNITY_BUILD
     -DGaussLib_INCLUDE_DIR:STRING="$GAUSSIAN_LIB_DIR"
     -S "$SOURCE_DIR"
     -B "$OUTPUT_DIR"

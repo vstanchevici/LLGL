@@ -8,6 +8,7 @@
 #include "MTFeatureSet.h"
 #include "MTDevice.h"
 #include "OSXAvailability.h"
+#include <LLGL/ShaderFlags.h>
 #include <AvailabilityMacros.h>
 #include <initializer_list>
 #include <algorithm>
@@ -193,6 +194,8 @@ void LoadFeatureSetCaps(id<MTLDevice> device, MTLFeatureSet fset, RenderingCapab
     caps.limits.maxDepthBufferSamples       = static_cast<std::uint32_t>(maxSamples);
     caps.limits.maxStencilBufferSamples     = static_cast<std::uint32_t>(maxSamples);
     caps.limits.maxNoAttachmentSamples      = static_cast<std::uint32_t>(maxSamples);
+
+    caps.limits.storageResourceStageFlags   = StageFlags::AllStages;
 }
 
 

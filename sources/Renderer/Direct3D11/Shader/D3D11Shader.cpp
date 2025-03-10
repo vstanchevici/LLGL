@@ -8,8 +8,7 @@
 #include "D3D11Shader.h"
 #include "../D3D11Types.h"
 #include "../D3D11ObjectUtils.h"
-#include "../../DXCommon/DXCore.h"
-#include "../../DXCommon/DXTypes.h"
+#include "../../DXCommon/DXShaderReflection.h"
 #include "../../../Core/CoreUtils.h"
 #include "../../../Core/StringUtils.h"
 #include "../../../Core/ReportUtils.h"
@@ -142,11 +141,15 @@ bool D3D11Shader::CompileSource(ID3D11Device* device, const ShaderDescriptor& sh
         sourceName      = shaderDesc.debugName;
     }
 
+    /* If 'sourceSize' is 0, the source length is determined from the NUL-terminated source string */
+    if (sourceLength == 0 && sourceCode != nullptr)
+        sourceLength = std::strlen(sourceCode);
+
     /* Get parameters from shader descriptor */
     const char* entry   = shaderDesc.entryPoint;
     const char* target  = (shaderDesc.profile != nullptr ? shaderDesc.profile : "");
-    auto        defines = reinterpret_cast<const D3D_SHADER_MACRO*>(shaderDesc.defines);
-    auto        flags   = shaderDesc.flags;
+    auto*       defines = reinterpret_cast<const D3D_SHADER_MACRO*>(shaderDesc.defines);
+    long        flags   = shaderDesc.flags;
 
     /* Compile shader code */
     ComPtr<ID3DBlob> errors;
@@ -318,249 +321,10 @@ void D3D11Shader::CreateNativeShader(
     );
 }
 
-static ShaderResourceReflection* FetchOrInsertResource(
-    ShaderReflection&   reflection,
-    const char*         name,
-    const ResourceType  type,
-    std::uint32_t       slot)
-{
-    /* Fetch resource from list */
-    for (ShaderResourceReflection& resource : reflection.resources)
-    {
-        if (resource.binding.type == type &&
-            resource.binding.slot == slot &&
-            resource.binding.name.compare(name) == 0)
-        {
-            return (&resource);
-        }
-    }
-
-    /* Allocate new resource and initialize parameters */
-    reflection.resources.resize(reflection.resources.size() + 1);
-    ShaderResourceReflection* ref = &(reflection.resources.back());
-    {
-        ref->binding.name = std::string(name);
-        ref->binding.type = type;
-        ref->binding.slot = slot;
-    }
-    return ref;
-}
-
-// Converts a D3D11 signature parameter into a vertex attribute
-static void ConvertD3D11ParamDescToVertexAttrib(VertexAttribute& dst, const D3D11_SIGNATURE_PARAMETER_DESC& src)
-{
-    dst.name            = std::string(src.SemanticName);
-    dst.format          = DXGetSignatureParameterType(src.ComponentType, src.Mask);
-    dst.semanticIndex   = src.SemanticIndex;
-    dst.systemValue     = DXTypes::Unmap(src.SystemValueType);
-}
-
-// D3D11 shader reflection is currently not supported for MinGW,
-// due to missing reference to '_GUID const& __mingw_uuidof<ID3D11ShaderReflection>()'.
-#ifndef __GNUC__
-
-static HRESULT ReflectShaderVertexAttributes(
-    ID3D11ShaderReflection*     reflectionObject,
-    const D3D11_SHADER_DESC&    shaderDesc,
-    ShaderReflection&           reflection)
-{
-    for_range(i, shaderDesc.InputParameters)
-    {
-        /* Get signature parameter descriptor */
-        D3D11_SIGNATURE_PARAMETER_DESC paramDesc;
-        HRESULT hr = reflectionObject->GetInputParameterDesc(i, &paramDesc);
-        if (FAILED(hr))
-            return hr;
-
-        /* Add vertex input attribute to output list */
-        VertexAttribute vertexAttrib;
-        ConvertD3D11ParamDescToVertexAttrib(vertexAttrib, paramDesc);
-        reflection.vertex.inputAttribs.push_back(vertexAttrib);
-    }
-
-    for_range(i, shaderDesc.OutputParameters)
-    {
-        /* Get signature parameter descriptor */
-        D3D11_SIGNATURE_PARAMETER_DESC paramDesc;
-        HRESULT hr = reflectionObject->GetOutputParameterDesc(i, &paramDesc);
-        if (FAILED(hr))
-            return hr;
-
-        /* Add vertex output attribute to output list */
-        VertexAttribute vertexAttrib;
-        ConvertD3D11ParamDescToVertexAttrib(vertexAttrib, paramDesc);
-        reflection.vertex.outputAttribs.push_back(vertexAttrib);
-    }
-
-    return S_OK;
-}
-
-// Converts a D3D11 signature parameter into a fragment attribute
-static void ConvertD3D11ParamDescToFragmentAttrib(FragmentAttribute& dst, const D3D11_SIGNATURE_PARAMETER_DESC& src)
-{
-    dst.name        = std::string(src.SemanticName);
-    dst.format      = DXGetSignatureParameterType(src.ComponentType, src.Mask);
-    dst.location    = src.SemanticIndex;
-    dst.systemValue = DXTypes::Unmap(src.SystemValueType);
-}
-
-static HRESULT ReflectShaderFragmentAttributes(
-    ID3D11ShaderReflection*     reflectionObject,
-    const D3D11_SHADER_DESC&    shaderDesc,
-    ShaderReflection&           reflection)
-{
-    for_range(i, shaderDesc.OutputParameters)
-    {
-        /* Get signature parameter descriptor */
-        D3D11_SIGNATURE_PARAMETER_DESC paramDesc;
-        HRESULT hr = reflectionObject->GetOutputParameterDesc(i, &paramDesc);
-        if (FAILED(hr))
-            return hr;
-
-        /* Add fragment attribute to output list */
-        FragmentAttribute fragmentAttrib;
-        ConvertD3D11ParamDescToFragmentAttrib(fragmentAttrib, paramDesc);
-        reflection.fragment.outputAttribs.push_back(fragmentAttrib);
-    }
-
-    return S_OK;
-}
-
-static void ReflectShaderResourceGeneric(
-    const D3D11_SHADER_INPUT_BIND_DESC& inputBindDesc,
-    ShaderReflection&                   reflection,
-    const ResourceType                  resourceType,
-    long                                bindFlags,
-    long                                stageFlags,
-    const StorageBufferType             storageBufferType   = StorageBufferType::Undefined)
-{
-    /* Initialize resource view descriptor for a generic resource (texture, sampler, storage buffer etc.) */
-    auto resource = FetchOrInsertResource(reflection, inputBindDesc.Name, resourceType, inputBindDesc.BindPoint);
-    {
-        resource->binding.bindFlags     |= bindFlags;
-        resource->binding.stageFlags    |= stageFlags;
-        resource->binding.arraySize     = inputBindDesc.BindCount;
-
-        /* Take storage buffer type or unmap from input type */
-        if (storageBufferType != StorageBufferType::Undefined)
-            resource->storageBufferType = storageBufferType;
-        else
-            resource->storageBufferType = DXTypes::Unmap(inputBindDesc.Type);
-    }
-}
-
-static HRESULT ReflectShaderConstantBuffer(
-    ID3D11ShaderReflection*             reflectionObject,
-    ShaderReflection&                   reflection,
-    const D3D11_SHADER_DESC&            shaderDesc,
-    const D3D11_SHADER_INPUT_BIND_DESC& inputBindDesc,
-    long                                stageFlags,
-    UINT&                               cbufferIdx)
-{
-    /* Initialize resource view descriptor for constant buffer */
-    auto resource = FetchOrInsertResource(reflection, inputBindDesc.Name, ResourceType::Buffer, inputBindDesc.BindPoint);
-    {
-        resource->binding.bindFlags     |= BindFlags::ConstantBuffer;
-        resource->binding.stageFlags    |= stageFlags;
-        resource->binding.arraySize     = inputBindDesc.BindCount;
-    }
-
-    /* Determine constant buffer size */
-    if (cbufferIdx < shaderDesc.ConstantBuffers)
-    {
-        auto cbufferReflection = reflectionObject->GetConstantBufferByIndex(cbufferIdx++);
-
-        D3D11_SHADER_BUFFER_DESC shaderBufferDesc;
-        HRESULT hr = cbufferReflection->GetDesc(&shaderBufferDesc);
-        if (FAILED(hr))
-            return hr;
-        DXThrowIfFailed(hr, "failed to retrieve D3D11 shader buffer descriptor");
-
-        if (shaderBufferDesc.Type == D3D_CT_CBUFFER)
-        {
-            /* Store constant buffer size in output descriptor */
-            resource->constantBufferSize = shaderBufferDesc.Size;
-        }
-        else
-        {
-            /* Type mismatch in descriptors */
-            return E_FAIL;
-        }
-    }
-    else
-    {
-        /* Resource index mismatch in descriptor */
-        return E_FAIL;
-    }
-
-    return S_OK;
-}
-
-static HRESULT ReflectShaderInputBindings(
-    ID3D11ShaderReflection*     reflectionObject,
-    const D3D11_SHADER_DESC&    shaderDesc,
-    long                        stageFlags,
-    ShaderReflection&           reflection)
-{
-    HRESULT hr = S_OK;
-    UINT cbufferIdx = 0;
-
-    for_range(i, shaderDesc.BoundResources)
-    {
-        /* Get shader input resource descriptor */
-        D3D11_SHADER_INPUT_BIND_DESC inputBindDesc;
-        HRESULT hr = reflectionObject->GetResourceBindingDesc(i, &inputBindDesc);
-        if (FAILED(hr))
-            return hr;
-
-        /* Reflect shader resource view */
-        switch (inputBindDesc.Type)
-        {
-            case D3D_SIT_CBUFFER:
-                hr = ReflectShaderConstantBuffer(reflectionObject, reflection, shaderDesc, inputBindDesc, stageFlags, cbufferIdx);
-                break;
-
-            case D3D_SIT_TBUFFER:
-            case D3D_SIT_TEXTURE:
-                if (inputBindDesc.Dimension == D3D_SRV_DIMENSION_BUFFER)
-                    ReflectShaderResourceGeneric(inputBindDesc, reflection, ResourceType::Buffer, BindFlags::Sampled, stageFlags, StorageBufferType::TypedBuffer);
-                else
-                    ReflectShaderResourceGeneric(inputBindDesc, reflection, ResourceType::Texture, BindFlags::Sampled, stageFlags);
-                break;
-
-            case D3D_SIT_SAMPLER:
-                ReflectShaderResourceGeneric(inputBindDesc, reflection, ResourceType::Sampler, 0, stageFlags);
-                break;
-
-            case D3D_SIT_STRUCTURED:
-            case D3D_SIT_BYTEADDRESS:
-                ReflectShaderResourceGeneric(inputBindDesc, reflection, DXTypes::Unmap(inputBindDesc.Dimension), BindFlags::Sampled, stageFlags);
-                break;
-
-            case D3D_SIT_UAV_RWTYPED:
-            case D3D_SIT_UAV_RWSTRUCTURED:
-            case D3D_SIT_UAV_RWBYTEADDRESS:
-            case D3D_SIT_UAV_APPEND_STRUCTURED:
-            case D3D_SIT_UAV_CONSUME_STRUCTURED:
-            case D3D_SIT_UAV_RWSTRUCTURED_WITH_COUNTER:
-                ReflectShaderResourceGeneric(inputBindDesc, reflection, DXTypes::Unmap(inputBindDesc.Dimension), BindFlags::Storage, stageFlags);
-                break;
-
-            default:
-                break;
-        }
-
-        if (FAILED(hr))
-            return hr;
-    }
-
-    return S_OK;
-}
-
-#endif // /__GNUC__
-
 HRESULT D3D11Shader::ReflectShaderByteCode(ShaderReflection& reflection) const
 {
+    // D3D11 shader reflection is currently not supported for MinGW,
+    // due to missing reference to '_GUID const& __mingw_uuidof<ID3D11ShaderReflection>()'.
     #ifndef __GNUC__
 
     HRESULT hr = S_OK;
@@ -579,20 +343,22 @@ HRESULT D3D11Shader::ReflectShaderByteCode(ShaderReflection& reflection) const
     if (GetType() == ShaderType::Vertex)
     {
         /* Get input parameter descriptors */
-        hr = ReflectShaderVertexAttributes(reflectionObject.Get(), shaderDesc, reflection);
+        hr = DXReflectShaderVertexAttributes<D3D11_SIGNATURE_PARAMETER_DESC>(reflection, reflectionObject.Get(), shaderDesc);
         if (FAILED(hr))
             return hr;
     }
     else if (GetType() == ShaderType::Fragment)
     {
         /* Get output parameter descriptors */
-        hr = ReflectShaderFragmentAttributes(reflectionObject.Get(), shaderDesc, reflection);
+        hr = DXReflectShaderFragmentAttributes<D3D11_SIGNATURE_PARAMETER_DESC>(reflection, reflectionObject.Get(), shaderDesc);
         if (FAILED(hr))
             return hr;
     }
 
     /* Get input bindings */
-    hr = ReflectShaderInputBindings(reflectionObject.Get(), shaderDesc, GetStageFlags(GetType()), reflection);
+    hr = DXReflectShaderInputBindings<D3D11_SHADER_BUFFER_DESC, D3D11_SHADER_VARIABLE_DESC, D3D11_SHADER_TYPE_DESC, D3D11_SHADER_INPUT_BIND_DESC>(
+        reflection, reflectionObject.Get(), shaderDesc, GetStageFlags(GetType())
+    );
     if (FAILED(hr))
         return hr;
 
@@ -617,6 +383,8 @@ HRESULT D3D11Shader::ReflectShaderByteCode(ShaderReflection& reflection) const
 
 HRESULT D3D11Shader::ReflectConstantBuffers(std::vector<D3D11ConstantBufferReflection>& outConstantBuffers) const
 {
+    // D3D11 shader reflection is currently not supported for MinGW,
+    // due to missing reference to '_GUID const& __mingw_uuidof<ID3D11ShaderReflection>()'.
     #ifndef __GNUC__
 
     HRESULT hr = S_OK;
@@ -647,7 +415,7 @@ HRESULT D3D11Shader::ReflectConstantBuffers(std::vector<D3D11ConstantBufferRefle
         if (inputBindDesc.Type == D3D_SIT_CBUFFER)
         {
             /* Get constant buffer reflection */
-            auto* cbufferReflection = reflectionObject->GetConstantBufferByName(inputBindDesc.Name);
+            ID3D11ShaderReflectionConstantBuffer* cbufferReflection = reflectionObject->GetConstantBufferByName(inputBindDesc.Name);
             if (cbufferReflection == nullptr)
                 return E_POINTER;
 
@@ -661,7 +429,7 @@ HRESULT D3D11Shader::ReflectConstantBuffers(std::vector<D3D11ConstantBufferRefle
             for_range(fieldIndex, shaderBufferDesc.Variables)
             {
                 /* Get constant field reflection */
-                auto* fieldReflection = cbufferReflection->GetVariableByIndex(fieldIndex);
+                ID3D11ShaderReflectionVariable* fieldReflection = cbufferReflection->GetVariableByIndex(fieldIndex);
                 if (fieldReflection == nullptr)
                     return E_POINTER;
 

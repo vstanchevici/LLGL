@@ -925,10 +925,12 @@ LLGLColorMaskFlags;
 
 typedef enum LLGLRenderSystemFlags
 {
-    LLGLRenderSystemDebugDevice  = (1 << 0),
-    LLGLRenderSystemPreferNVIDIA = (1 << 1),
-    LLGLRenderSystemPreferAMD    = (1 << 2),
-    LLGLRenderSystemPreferIntel  = (1 << 3),
+    LLGLRenderSystemDebugDevice       = (1 << 0),
+    LLGLRenderSystemPreferNVIDIA      = (1 << 1),
+    LLGLRenderSystemPreferAMD         = (1 << 2),
+    LLGLRenderSystemPreferIntel       = (1 << 3),
+    LLGLRenderSystemSoftwareDevice    = (1 << 4),
+    LLGLRenderSystemDebugBreakOnError = (1 << 5),
 }
 LLGLRenderSystemFlags;
 
@@ -1145,7 +1147,7 @@ LLGLQueryPipelineStatistics;
 
 typedef struct LLGLProfileTimeRecord
 {
-    const char* annotation;    /* = "" */
+    const char* annotation;
     uint64_t    cpuTicksStart; /* = 0 */
     uint64_t    cpuTicksEnd;   /* = 0 */
     uint64_t    elapsedTime;   /* = 0 */
@@ -1266,6 +1268,7 @@ typedef struct LLGLRenderingLimits
     uint32_t maxDepthBufferSamples;            /* = 0 */
     uint32_t maxStencilBufferSamples;          /* = 0 */
     uint32_t maxNoAttachmentSamples;           /* = 0 */
+    long     storageResourceStageFlags;        /* = 0 */
 }
 LLGLRenderingLimits;
 
@@ -1379,16 +1382,6 @@ typedef struct LLGLFragmentAttribute
 }
 LLGLFragmentAttribute;
 
-typedef struct LLGLImageView
-{
-    LLGLImageFormat format;    /* = LLGLImageFormatRGBA */
-    LLGLDataType    dataType;  /* = LLGLDataTypeUInt8 */
-    const void*     data;      /* = NULL */
-    size_t          dataSize;  /* = 0 */
-    uint32_t        rowStride; /* = 0 */
-}
-LLGLImageView;
-
 typedef struct LLGLMutableImageView
 {
     LLGLImageFormat format;   /* = LLGLImageFormatRGBA */
@@ -1397,6 +1390,17 @@ typedef struct LLGLMutableImageView
     size_t          dataSize; /* = 0 */
 }
 LLGLMutableImageView;
+
+typedef struct LLGLImageView
+{
+    LLGLImageFormat format;      /* = LLGLImageFormatRGBA */
+    LLGLDataType    dataType;    /* = LLGLDataTypeUInt8 */
+    const void*     data;        /* = NULL */
+    size_t          dataSize;    /* = 0 */
+    uint32_t        rowStride;   /* = 0 */
+    uint32_t        layerStride; /* = 0 */
+}
+LLGLImageView;
 
 typedef struct LLGLBindingDescriptor
 {
@@ -1583,6 +1587,7 @@ typedef struct LLGLSwapChainDescriptor
     uint32_t     samples;     /* = 1 */
     uint32_t     swapBuffers; /* = 2 */
     bool         fullscreen;  /* = false */
+    bool         resizable;   /* = false */
 }
 LLGLSwapChainDescriptor;
 

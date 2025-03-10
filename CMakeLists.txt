@@ -11,6 +11,7 @@ cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 
 project(LLGL)
 
+
 # === Target platforms ===
 
 if("${CMAKE_GENERATOR_PLATFORM}" STREQUAL "x64")
@@ -81,9 +82,7 @@ endif()
 
 # === Build path ===
 
-set(OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/build)
-set(EXECUTABLE_OUTPUT_PATH ${OUTPUT_DIR} CACHE PATH "Build directory" FORCE)
-set(LIBRARY_OUTPUT_PATH ${OUTPUT_DIR} CACHE PATH "Build directory" FORCE)
+set(LLGL_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/build" CACHE PATH "Override binary output directory")
 
 set( EXTERNAL_MODULE_DIR            "${PROJECT_SOURCE_DIR}/cmake"                   )
 set( PROJECT_INCLUDE_DIR            "${PROJECT_SOURCE_DIR}/include"                 )
@@ -118,6 +117,69 @@ macro(ADD_DEBUG_DEFINE IDENT)
     # Requires CMake 3.12
     add_compile_definitions("$<$<CONFIG:Debug>:${IDENT}>")
 endmacro()
+
+
+# === Options ===
+
+if(APPLE)
+    set(CMAKE_MACOSX_RPATH 1)
+endif()
+
+if(${CMAKE_SIZEOF_VOID_P} EQUAL 8)
+    set(LLGL_BUILD_64BIT 1)
+else()
+    set(LLGL_BUILD_64BIT 0)
+endif()
+
+option(LLGL_ENABLE_CHECKED_CAST "Enable dynamic checked cast (only in Debug mode)" ON)
+option(LLGL_ENABLE_DEBUG_LAYER "Enable renderer debug layer (for both Debug and Release mode)" ON)
+option(LLGL_ENABLE_EXCEPTIONS "Enable C++ exceptions" OFF)
+
+option(LLGL_PREFER_STL_CONTAINERS "Prefers C++ STL containers over custom containers, e.g. std::vector over SmallVector<T>" OFF)
+
+option(LLGL_BUILD_STATIC_LIB "Build LLGL as static library" OFF)
+option(LLGL_BUILD_TESTS "Include test projects" OFF)
+option(LLGL_BUILD_EXAMPLES "Include example projects" OFF)
+
+option(LLGL_BUILD_RENDERER_NULL "Include Null renderer project" ON)
+
+if(NOT LLGL_UWP_PLATFORM)
+    if(EMSCRIPTEN)
+        option(LLGL_BUILD_RENDERER_WEBGL "Include WebGL renderer project" ON)
+        option(LLGL_ENABLE_EMSCRIPTEN_PTHREADS "Build for Wasm platform with pthreads (USE_PTHREADS). This limits browser availability!" OFF)
+    elseif(LLGL_MOBILE_PLATFORM)
+        option(LLGL_BUILD_RENDERER_OPENGLES3 "Include OpenGLES 3 renderer project" ON)
+    else()
+        option(LLGL_BUILD_RENDERER_OPENGL "Include OpenGL renderer project" ON)
+    endif()
+endif()
+
+if(APPLE)
+    option(LLGL_MACOS_ENABLE_COREVIDEO "Enable CoreVideo framework (for refresh rate of built-in displays)" ON)
+    option(LLGL_BUILD_RENDERER_METAL "Include Metal renderer project" ON)
+endif()
+
+if(NOT LLGL_UWP_PLATFORM)
+    option(LLGL_BUILD_RENDERER_VULKAN "Include Vulkan renderer project (experimental)" OFF)
+endif()
+
+if(WIN32)
+    option(LLGL_BUILD_RENDERER_DIRECT3D11 "Include Direct3D11 renderer project" ON)
+    option(LLGL_BUILD_RENDERER_DIRECT3D12 "Include Direct3D12 renderer project" ON)
+endif()
+
+if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.16")
+    option(LLGL_UNITY_BUILD "Build LLGL modules as unity builds in batches. This can speedup compilation time." OFF)
+endif()
+
+option(LLGL_BUILD_WRAPPER_C99 "Include wrapper for C99" OFF)
+option(LLGL_BUILD_WRAPPER_CSHARP "Include wrapper for C# (requires LLGL_BUILD_WRAPPER_C99)" OFF)
+
+if(NOT LLGL_BUILD_WRAPPER_C99)
+    if(LLGL_BUILD_WRAPPER_CSHARP)
+        message(SEND_ERROR "LLGL_BUILD_WRAPPER_CSHARP is enabled but not LLGL_BUILD_WRAPPER_C99; The C# wrapper depends on the C99 wrapper!")
+    endif()
+endif()
 
 
 # === Functions ===
@@ -230,10 +292,23 @@ endfunction()
 function(set_llgl_module_properties MODULE_NAME)
     set_target_properties(
         ${MODULE_NAME} PROPERTIES
-            LINKER_LANGUAGE CXX
-            DEBUG_POSTFIX   "D"
-            FOLDER          "LLGL"
+            LINKER_LANGUAGE             CXX
+            DEBUG_POSTFIX               "D"
+            FOLDER                      "LLGL"
+            ARCHIVE_OUTPUT_DIRECTORY    "${LLGL_OUTPUT_DIR}"
+            LIBRARY_OUTPUT_DIRECTORY    "${LLGL_OUTPUT_DIR}"
+            RUNTIME_OUTPUT_DIRECTORY    "${LLGL_OUTPUT_DIR}"
     )
+    if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.16")
+        if(LLGL_UNITY_BUILD)
+            set_target_properties(
+                ${MODULE_NAME} PROPERTIES
+                    UNITY_BUILD             ON
+                    UNITY_BUILD_MODE        BATCH
+                    UNITY_BUILD_BATCH_SIZE  32
+            )
+        endif()
+    endif()
 endfunction()
 
 function(append_global_property PROP_NAME OUTPUT_LIST NEW_ITEM)
@@ -353,14 +428,21 @@ function(add_llgl_example_project PROJECT_NAME LINKER_LANG SRC_FILES LIB_FILES)
         target_link_libraries(${PROJECT_NAME} ${LIB_FILES})
     endif()
 
+    # Configure base properties for example project
+    set_target_properties(
+        ${PROJECT_NAME} PROPERTIES
+            DEBUG_POSTFIX               "D"
+            RUNTIME_OUTPUT_DIRECTORY    "${LLGL_OUTPUT_DIR}"
+    )
+
     # Configure linker settings
     if(LLGL_ANDROID_PLATFORM)
         # When linking the libExample*.so library for Android, we link with C++ semantics.
         # Otherwise, the libc++_shared.so library will be unintentionally included,
         # since the static dependencies like libLLGL.so must be build with C++, regardingless of the example project's language
-        set_target_properties(${PROJECT_NAME} PROPERTIES LINKER_LANGUAGE CXX DEBUG_POSTFIX "D")
+        set_target_properties(${PROJECT_NAME} PROPERTIES LINKER_LANGUAGE CXX)
     else()
-        set_target_properties(${PROJECT_NAME} PROPERTIES LINKER_LANGUAGE ${LINKER_LANG} DEBUG_POSTFIX "D")
+        set_target_properties(${PROJECT_NAME} PROPERTIES LINKER_LANGUAGE ${LINKER_LANG})
     endif()
     
     # Configure working directory and project solution folder
@@ -414,61 +496,7 @@ set(SUMMARY_TARGET_ARCH "Unknown")
 set(SUMMARY_FLAGS "")
 
 
-# === Options ===
-
-if(APPLE)
-    set(CMAKE_MACOSX_RPATH 1)
-endif()
-
-if(${CMAKE_SIZEOF_VOID_P} EQUAL 8)
-    set(LLGL_BUILD_64BIT 1)
-else()
-    set(LLGL_BUILD_64BIT 0)
-endif()
-
-option(LLGL_ENABLE_CHECKED_CAST "Enable dynamic checked cast (only in Debug mode)" ON)
-option(LLGL_ENABLE_DEBUG_LAYER "Enable renderer debug layer (for both Debug and Release mode)" ON)
-option(LLGL_ENABLE_EXCEPTIONS "Enable C++ exceptions" OFF)
-
-option(LLGL_PREFER_STL_CONTAINERS "Prefers C++ STL containers over custom containers, e.g. std::vector over SmallVector<T>" OFF)
-
-option(LLGL_BUILD_STATIC_LIB "Build LLGL as static library" OFF)
-option(LLGL_BUILD_TESTS "Include test projects" OFF)
-option(LLGL_BUILD_EXAMPLES "Include example projects" OFF)
-
-option(LLGL_BUILD_RENDERER_NULL "Include Null renderer project" ON)
-
-if(NOT LLGL_UWP_PLATFORM)
-    if(EMSCRIPTEN)
-        option(LLGL_BUILD_RENDERER_WEBGL "Include WebGL renderer project" ON)
-        option(LLGL_ENABLE_EMSCRIPTEN_PTHREADS "Build for Wasm platform with pthreads (USE_PTHREADS). This limits browser availability!" OFF)
-    elseif(LLGL_MOBILE_PLATFORM)
-        option(LLGL_BUILD_RENDERER_OPENGLES3 "Include OpenGLES 3 renderer project" ON)
-    else()
-        option(LLGL_BUILD_RENDERER_OPENGL "Include OpenGL renderer project" ON)
-    endif()
-endif()
-
-if(APPLE)
-    option(LLGL_MACOS_ENABLE_COREVIDEO "Enable CoreVideo framework (for refresh rate of built-in displays)" ON)
-    option(LLGL_BUILD_RENDERER_METAL "Include Metal renderer project" ON)
-elseif(NOT LLGL_UWP_PLATFORM)
-    option(LLGL_BUILD_RENDERER_VULKAN "Include Vulkan renderer project (experimental)" OFF)
-endif()
-
-if(WIN32)
-    option(LLGL_BUILD_RENDERER_DIRECT3D11 "Include Direct3D11 renderer project" ON)
-    option(LLGL_BUILD_RENDERER_DIRECT3D12 "Include Direct3D12 renderer project" ON)
-endif()
-
-option(LLGL_BUILD_WRAPPER_C99 "Include wrapper for C99" OFF)
-option(LLGL_BUILD_WRAPPER_CSHARP "Include wrapper for C# (requires LLGL_BUILD_WRAPPER_C99)" OFF)
-
-if(NOT LLGL_BUILD_WRAPPER_C99)
-    if(LLGL_BUILD_WRAPPER_CSHARP)
-        message(SEND_ERROR "LLGL_BUILD_WRAPPER_CSHARP is enabled but not LLGL_BUILD_WRAPPER_C99; The C# wrapper depends on the C99 wrapper!")
-    endif()
-endif()
+# === Definitions ===
 
 if(LLGL_ENABLE_CHECKED_CAST)
     ADD_DEBUG_DEFINE(LLGL_ENABLE_CHECKED_CAST)
@@ -492,6 +520,10 @@ endif()
 
 if(LLGL_MACOS_ENABLE_COREVIDEO)
     ADD_DEFINE(LLGL_MACOS_ENABLE_COREVIDEO)
+endif()
+
+if(LLGL_UNITY_BUILD)
+    ADD_DEFINE(LLGL_UNITY_BUILD)
 endif()
 
 if(LLGL_WASM_PLATFORM)

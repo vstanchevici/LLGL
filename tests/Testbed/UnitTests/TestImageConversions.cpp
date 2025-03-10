@@ -31,7 +31,7 @@ DEF_RITEST( ImageConversions )
 
     auto TestConversion = [&](const std::string& filename, unsigned threadCount, double& outTime) -> TestResult
     {
-        Image img = TestbedContext::LoadImageFromFile(imagePath + filename);
+        Image img = TestbedContext::LoadImageFromFile(imagePath + filename, opt.verbose);
 
         const Image imgCopy = img;
 
@@ -50,6 +50,7 @@ DEF_RITEST( ImageConversions )
                 {                                                                                           \
                     const std::string name = MakeOutputFilename(filename, img.GetFormat(), threadCount);    \
                     Log::Errorf(                                                                            \
+                        Log::ColorFlags::StdError,                                                          \
                         "Mismatch between image size '%s' (%u bytes) and expected size (%u bytes)\n",       \
                         name.c_str(), static_cast<unsigned>(img.GetDataSize()), static_cast<unsigned>(SIZE) \
                     );                                                                                      \
@@ -107,6 +108,7 @@ DEF_RITEST( ImageConversions )
                 if (std::abs(p0 - p1) > tolerance)
                 {
                     Log::Errorf(
+                        Log::ColorFlags::StdError,
                         "Mismatch between final pixel [%u,%u] of image '%s' (R=%d) and original pixel (R=%d)\n",
                         x, y, filename.c_str(), p0, p1
                     );
@@ -118,14 +120,18 @@ DEF_RITEST( ImageConversions )
         return TestResult::Passed;
     };
 
-    #define TEST_CONVERSION_THREADED(FILENAME, THREADS, TIME)                                           \
-        {                                                                                               \
-            TestResult result = TestConversion((FILENAME), (THREADS), (TIME));                          \
-            if (result != TestResult::Passed)                                                           \
-            {                                                                                           \
-                Log::Errorf("ImageConversion(\"%s\", threads: %d) failed\n", (FILENAME), (THREADS));    \
-                return result;                                                                          \
-            }                                                                                           \
+    #define TEST_CONVERSION_THREADED(FILENAME, THREADS, TIME)                   \
+        {                                                                       \
+            TestResult result = TestConversion((FILENAME), (THREADS), (TIME));  \
+            if (result != TestResult::Passed)                                   \
+            {                                                                   \
+                Log::Errorf(                                                    \
+                    Log::ColorFlags::StdError,                                  \
+                    "ImageConversion(\"%s\", threads: %d) failed\n",            \
+                    (FILENAME), (THREADS)                                       \
+                );                                                              \
+                return result;                                                  \
+            }                                                                   \
         }
 
     #define TEST_CONVERSION(FILENAME)                                                                               \
@@ -138,7 +144,7 @@ DEF_RITEST( ImageConversions )
             {                                                                                                       \
                 const unsigned maxThreads = std::max(3u, std::thread::hardware_concurrency());                      \
                 Log::Printf(                                                                                        \
-                    "Conversions for '%s': 1 Thread (%.4f ms), 2 Threads (%.4f ms), %u Threads (%.4f ms):\n",       \
+                    "Conversions for '%s': 1 Thread (%.4f ms), 2 Threads (%.4f ms), Max [%u] Threads (%.4f ms):\n", \
                     (FILENAME), totalTimes[0] * 1000.0, totalTimes[1] * 1000.0, maxThreads, totalTimes[2] * 1000.0  \
                 );                                                                                                  \
             }                                                                                                       \

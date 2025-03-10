@@ -54,7 +54,7 @@ DEF_TEST( TextureToBufferCopy )
         {
             Log::Errorf(
                 "Initial data size (%" PRIu64 ") is too small for texture %s (%" PRIu64 ")\n",
-                srcImage.dataSize, imgSizeMip0
+                srcImage.dataSize, name, imgSizeMip0
             );
             return TestResult::FailedErrors;
         }
@@ -101,7 +101,7 @@ DEF_TEST( TextureToBufferCopy )
         }
 
         // Create buffer to copy from source texture and to destination texture
-        const std::string bufName = std::string("interm.") + name;
+        const std::string bufName = std::string("tmpBuf.") + name;
         BufferDescriptor bufDesc;
         {
             bufDesc.size        = bufSize;
@@ -110,7 +110,7 @@ DEF_TEST( TextureToBufferCopy )
         CREATE_BUFFER(buf, bufDesc, bufName.c_str(), nullptr);
 
         // Create destination texture
-        const std::string dstTexName = std::string("dst.") + name;
+        const std::string dstTexName = std::string("dstTex.") + name;
         TextureDescriptor dstTexDesc;
         {
             dstTexDesc.type         = TextureType::Texture2D;
@@ -131,6 +131,12 @@ DEF_TEST( TextureToBufferCopy )
         {
             for_range(layer, srcTexDesc.arrayLayers)
             {
+                if (opt.verbose)
+                {
+                    Log::Printf("Copy texture \"%s\" (mip: %u, layer: %u) to buffer\n", name, mip, layer);
+                    ::fflush(stdout);
+                }
+
                 // Determine texture region to copy buffer from
                 TextureRegion srcRegion;
                 {
@@ -150,9 +156,14 @@ DEF_TEST( TextureToBufferCopy )
                 // Copy source texture to buffer and back to destination texture
                 cmdBuffer->Begin();
                 {
-                    cmdBuffer->FillBuffer(*buf, 0, FLIP_ENDIAN(0xDEADBEEF), bufDesc.size);
-                    cmdBuffer->CopyBufferFromTexture(*buf, 0, *srcTex, srcRegion);
-                    cmdBuffer->CopyTextureFromBuffer(*dstTex, dstRegion, *buf, 0);
+                    const std::string debugGroup = std::string(name) + " (mip: " + std::to_string(mip) + ", layer: " + std::to_string(layer) + ")";
+                    cmdBuffer->PushDebugGroup(debugGroup.c_str());
+                    {
+                        cmdBuffer->FillBuffer(*buf, 0, FLIP_ENDIAN(0xDEADBEEF), bufDesc.size);
+                        cmdBuffer->CopyBufferFromTexture(*buf, 0, *srcTex, srcRegion);
+                        cmdBuffer->CopyTextureFromBuffer(*dstTex, dstRegion, *buf, 0);
+                    }
+                    cmdBuffer->PopDebugGroup();
                 }
                 cmdBuffer->End();
 

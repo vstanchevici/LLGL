@@ -141,7 +141,7 @@ class LLGL_EXPORT Color
         \brief Explicitly uninitialized constructor. All attributes are uninitialized!
         \remarks Only use this constructor when you want to allocate a large amount of color elements that are being initialized later.
         */
-        Color(UninitializeTag)
+        explicit Color(UninitializeTag)
         {
             // do nothing
         }
@@ -201,7 +201,7 @@ class LLGL_EXPORT Color
         */
         T& operator [] (std::size_t component)
         {
-            LLGL_VERIFY(component < N, OutOfRange);
+            LLGL_VERIFY_EXT(OutOfRange, component < N);
             return v_[component];
         }
 
@@ -212,7 +212,7 @@ class LLGL_EXPORT Color
         */
         const T& operator [] (std::size_t component) const
         {
-            LLGL_VERIFY(component < N, OutOfRange);
+            LLGL_VERIFY_EXT(OutOfRange, component < N);
             return v_[component];
         }
 

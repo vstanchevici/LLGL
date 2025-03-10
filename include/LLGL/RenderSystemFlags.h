@@ -208,7 +208,7 @@ struct RenderSystemFlags
           See https://www.khronos.org/opengl/wiki/Debug_Output
         - Metal: Not supported.
         */
-        DebugDevice     = (1 << 0),
+        DebugDevice         = (1 << 0),
 
         /**
         \brief Hints the render system to prefer a video adapter from NVIDIA.
@@ -217,13 +217,29 @@ struct RenderSystemFlags
         \remarks This is merely a hint to the render system bebacause not all rendering APIs support selecting a specific video adapter (such as OpenGL).
         \note Only supported with: Direct3D 11, Direct3D 12, Vulkan.
         */
-        PreferNVIDIA    = (1 << 1),
+        PreferNVIDIA        = (1 << 1),
 
         //! \see PreferNVIDIA
-        PreferAMD       = (1 << 2),
+        PreferAMD           = (1 << 2),
 
         //! \see PreferNVIDIA
-        PreferIntel     = (1 << 3),
+        PreferIntel         = (1 << 3),
+
+        /**
+        \brief Specifies that a software device is requested such as "Microsoft Basic Render Driver" as a reference device for Direct3D.
+        \remarks This can be used for debugging or if the hardware does not support the respective API.
+        \note Only supported with: Direct3D 11.
+        */
+        SoftwareDevice      = (1 << 4),
+
+        /**
+        \brief Specifies that the debugger should break when an error in the debug validation was detected.
+        \remarks This helps to identify wrong parameters with a full callstack right where it occurs.
+        This applies to both the native debug layer from the rendering API as well as LLGL's own debug layer.
+        \note Only supported with: Direct3D 12, Vulkan, OpenGL.
+        \see DebugDevice
+        */
+        DebugBreakOnError   = (1 << 5),
     };
 };
 
@@ -233,7 +249,7 @@ struct RenderSystemFlags
 /**
 \brief Renderer identification number enumeration.
 \remarks There are several IDs for reserved future renderers, which are currently not supported (and maybe never supported).
-You can use an ID greater than 'RendererID::Reserved' (which has a value of 0x000000ff) for your own renderer.
+You can use an ID greater than \c RendererID::Reserved (which has a value of 0x000000FF) for your own renderer.
 Or use one of the pre-defined IDs if you want to implement your own OpenGL/ Direct3D or whatever renderer.
 \see RendererInfo::rendererID
 */
@@ -848,6 +864,13 @@ struct RenderingLimits
     \see RenderTargetDescriptor::samples
     */
     std::uint32_t   maxNoAttachmentSamples              = 0;
+
+    /**
+    \brief Specifies the shader stages in which storage buffers and textures (aka UAVs/ SSBOs) can be used.
+    \remarks If storage resources are not supported at all, this is zero.
+    \see RenderingFeatures::hasStorageBuffers
+    */
+    long            storageResourceStageFlags           = 0;
 };
 
 /**

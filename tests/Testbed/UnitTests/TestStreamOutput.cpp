@@ -208,8 +208,6 @@ DEF_TEST( StreamOutput )
     // Initialize scene constants
     const float rotation = static_cast<float>(frame) * 90.0f / static_cast<float>(numFrames - 1);
 
-    constexpr float bgColor[4] = { 0.2f, 0.2f, 0.4f, 1.0f };
-
     // Initialize scene settings
     const float frameTransition = static_cast<float>(frame) / static_cast<float>(numFrames - 1);
 
@@ -244,7 +242,7 @@ DEF_TEST( StreamOutput )
 
         cmdBuffer->BeginRenderPass(*swapChain);
         {
-            cmdBuffer->Clear(ClearFlags::ColorDepth, ClearValue{ bgColor });
+            cmdBuffer->Clear(ClearFlags::ColorDepth, bgColorDarkBlue);
             cmdBuffer->SetViewport(opt.resolution);
 
             int currentSOSwapBuffer = 0;
@@ -356,6 +354,7 @@ DEF_TEST( StreamOutput )
         if (actualNumPrimitives != expectedNumPrimitives)
         {
             Log::Errorf(
+                Log::ColorFlags::StdError,
                 "Mismatch between number of written stream-output primitives (0x%08X) in frame [%u] and expected value (0x%08X)\n",
                 actualNumPrimitives, frame, expectedNumPrimitives
             );
@@ -374,6 +373,7 @@ DEF_TEST( StreamOutput )
         if (actualPrimitiveOverflow != expectedPrimitiveOverflow)
         {
             Log::Errorf(
+                Log::ColorFlags::StdError,
                 "Mismatch between stream-output primitive overflow flag (0x%08X) in frame [%u] and expected value (0x%08X)\n",
                 actualPrimitiveOverflow, frame, expectedPrimitiveOverflow
             );

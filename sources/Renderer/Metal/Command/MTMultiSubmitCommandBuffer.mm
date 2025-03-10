@@ -87,7 +87,7 @@ void MTMultiSubmitCommandBuffer::UpdateBuffer(
     Buffer&         dstBuffer,
     std::uint64_t   dstOffset,
     const void*     data,
-    std::uint16_t   dataSize)
+    std::uint64_t   dataSize)
 {
     auto& dstBufferMT = LLGL_CAST(MTBuffer&, dstBuffer);
 
@@ -920,7 +920,7 @@ void MTMultiSubmitCommandBuffer::DoNativeCommand(const void* nativeCommand, std:
 
 bool MTMultiSubmitCommandBuffer::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
 {
-    return (nativeHandle == nullptr || nativeHandleSize == 0);
+    return false; // dummy - command is only allowed in immediate command buffer
 }
 
 

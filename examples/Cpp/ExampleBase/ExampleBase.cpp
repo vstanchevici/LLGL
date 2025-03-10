@@ -156,7 +156,7 @@ static const char* GetDefaultRendererModule()
     #elif defined LLGL_OS_WIN32
     return "Direct3D11";
     #elif defined LLGL_OS_MACOS
-    return (IsModuleAvailable("Metal") ? "Metal" : "OpenGL");
+    return "Metal";
     #elif defined LLGL_OS_IOS
     return "Metal";
     #elif defined LLGL_OS_ANDROID
@@ -168,11 +168,17 @@ static const char* GetDefaultRendererModule()
     #endif
 }
 
+static std::string GetPreferredRendererModule()
+{
+    auto modules = LLGL::RenderSystem::FindModules();
+    return (modules.empty() ? "Null" : modules.front());
+}
+
 std::string GetSelectedRendererModule(int argc, char* argv[])
 {
     // Set report callback to standard output
     LLGL::Log::RegisterCallbackStd();
-    std::string rendererModule = GetDefaultRendererModule();
+    std::string rendererModule = GetPreferredRendererModule();
     GetSelectedRendererModuleOrDefault(rendererModule, argc, argv);
     return rendererModule;
 }
@@ -367,12 +373,14 @@ void ExampleBase::ParseProgramArgs(int argc, char* argv[])
         g_Config.debugger = true;
     if (HasArgument("-i", argc, argv) || HasArgument("--icontext", argc, argv))
         g_Config.immediateSubmit = true;
-    if (HasArgument("-nvidia", argc, argv))
+    if (HasArgument("--nvidia", argc, argv))
         g_Config.flags |= LLGL::RenderSystemFlags::PreferNVIDIA;
-    if (HasArgument("-amd", argc, argv))
+    if (HasArgument("--amd", argc, argv))
         g_Config.flags |= LLGL::RenderSystemFlags::PreferAMD;
-    if (HasArgument("-intel", argc, argv))
+    if (HasArgument("--intel", argc, argv))
         g_Config.flags |= LLGL::RenderSystemFlags::PreferIntel;
+    if (HasArgument("--ref", argc, argv))
+        g_Config.flags |= LLGL::RenderSystemFlags::SoftwareDevice;
 }
 
 #if defined LLGL_OS_ANDROID
@@ -529,6 +537,7 @@ ExampleBase::ExampleBase(const LLGL::UTF8String& title)
         #else
         swapChainDesc.samples       = std::min<std::uint32_t>(g_Config.samples, renderer->GetRenderingCaps().limits.maxColorBufferSamples);
         #endif
+        swapChainDesc.resizable     = true;
     }
     swapChain = renderer->CreateSwapChain(swapChainDesc);
 
@@ -602,11 +611,6 @@ ExampleBase::ExampleBase(const LLGL::UTF8String& title)
     auto rendererName = renderer->GetName();
     window.SetTitle(title + " ( " + rendererName + " )");
 
-    // Change window descriptor to allow resizing
-    LLGL::WindowDescriptor wndDesc = window.GetDesc();
-    wndDesc.flags |= LLGL::WindowFlags::Resizable | LLGL::WindowFlags::DisableClearOnResize;
-    window.SetDesc(wndDesc);
-
     // Add window resize listener
     window.AddEventListener(std::make_shared<WindowEventHandler>(*this, swapChain, projection));
 
@@ -647,7 +651,7 @@ void ExampleBase::MainLoop()
             );
             const double invTicksFreqMS = 1000.0 / LLGL::Timer::Frequency();
             for (const LLGL::ProfileTimeRecord& rec : frameProfile.timeRecords)
-                LLGL::Log::Printf("%s: GPU time: %" PRIu64 " ns\n", rec.annotation, rec.elapsedTime);
+                LLGL::Log::Printf("%s: GPU time: %" PRIu64 " ns\n", rec.annotation.c_str(), rec.elapsedTime);
 
             debuggerObj_->SetTimeRecording(false);
             showTimeRecords_ = false;

@@ -45,6 +45,12 @@ class TestbedContext
         // Runs all tests and returns the number of failed ones. If all succeeded, the return value is 0.
         unsigned RunAllTests();
 
+        // Returns true if this context has a valid renderer.
+        inline bool IsValid() const
+        {
+            return (renderer.get() != nullptr);
+        }
+
     public:
 
         static unsigned RunRendererIndependentTests(int argc, char* argv[]);
@@ -310,6 +316,8 @@ class TestbedContext
 
         const std::string               moduleName;
         const Options                   opt;
+        const LLGL::ClearValue          bgColorDarkBlue         = { 0.2f, 0.2f, 0.4f, 1.0f };
+        const LLGL::ClearValue          bgColorLightBlue        = { 127.0f/255.0f, 127.0f/255.0f, 1.0f, 1.0f };
 
         unsigned                        failures                = 0;
 

@@ -38,7 +38,7 @@ namespace LLGL
 {
 
 
-#define LLGL_DBG_COMMAND(ANNOTATION, CMD)   \
+#define LLGL_DBG_COMMAND(CMD, ANNOTATION)   \
     if (perfProfilerEnabled_)               \
     {                                       \
         StartTimer(ANNOTATION);             \
@@ -50,9 +50,29 @@ namespace LLGL
         CMD;                                \
     }
 
+#define LLGL_DBG_COMMAND_EXT(CMD, ANNOTATION, ...)                              \
+    if (perfProfilerEnabled_)                                                   \
+    {                                                                           \
+        UTF8String annotation = UTF8String::Printf((ANNOTATION), __VA_ARGS__);  \
+        StartTimer(StringLiteral{ annotation.c_str(), CopyTag{} });             \
+        CMD;                                                                    \
+        EndTimer();                                                             \
+    }                                                                           \
+    else                                                                        \
+    {                                                                           \
+        CMD;                                                                    \
+    }
+
 #define LLGL_DBG_START_TIMER(ANNOTATION)    \
     if (perfProfilerEnabled_)               \
         StartTimer(ANNOTATION)
+
+#define LLGL_DBG_START_TIMER_EXT(ANNOTATION, ...)                               \
+    if (perfProfilerEnabled_)                                                   \
+    {                                                                           \
+        UTF8String annotation = UTF8String::Printf((ANNOTATION), __VA_ARGS__);  \
+        StartTimer(StringLiteral{ annotation.c_str(), CopyTag{} });             \
+    }
 
 #define LLGL_DBG_END_TIMER()   \
     if (perfProfilerEnabled_)   \
@@ -72,6 +92,39 @@ static const char* GetLabelOrDefault(const std::string& label, const char* defau
 static const char* GetLabelOrDefault(const char* label, const char* defaultLabel)
 {
     return (label != nullptr ? label : defaultLabel);
+}
+
+static const char* GetResourceLabel(const Resource& resource)
+{
+    switch (resource.GetResourceType())
+    {
+        case ResourceType::Buffer:
+        {
+            auto& bufferDbg = LLGL_CAST(const DbgBuffer&, resource);
+            return GetLabelOrDefault(bufferDbg.label, "LLGL::Buffer");
+        }
+
+        case ResourceType::Texture:
+        {
+            auto& textureDbg = LLGL_CAST(const DbgTexture&, resource);
+            return GetLabelOrDefault(textureDbg.label, "LLGL::Texture");
+        }
+
+        case ResourceType::Sampler:
+            return "LLGL::Sampler";
+
+        case ResourceType::Undefined:
+            break;
+
+        default:
+            break;
+    }
+    return "LLGL::Resource";
+}
+
+static const char* GetResourceLabel(const Resource* resource)
+{
+    return (resource != nullptr ? GetResourceLabel(*resource) : "null");
 }
 
 DbgCommandBuffer::DbgCommandBuffer(
@@ -117,7 +170,7 @@ void DbgCommandBuffer::Begin()
         ValidateBeginOfRecording();
 
     instance.Begin();
-    LLGL_DBG_START_TIMER("CommandBuffer");
+    LLGL_DBG_START_TIMER("CommandBuffer()");
 
     profile_.commandBufferRecord.encodings++;
 }
@@ -166,7 +219,7 @@ void DbgCommandBuffer::Execute(CommandBuffer& secondaryCommandBuffer)
         ValidateCommandBufferForExecute(commandBufferDbg.states_, GetLabelOrDefault(commandBufferDbg.label, "LLGL::CommandBuffer"));
     }
 
-    LLGL_DBG_COMMAND( "Execute", instance.Execute(commandBufferDbg.instance) );
+    LLGL_DBG_COMMAND( instance.Execute(commandBufferDbg.instance), "Execute()" );
 }
 
 /* ----- Blitting ----- */
@@ -175,7 +228,7 @@ void DbgCommandBuffer::UpdateBuffer(
     Buffer&         dstBuffer,
     std::uint64_t   dstOffset,
     const void*     data,
-    std::uint16_t   dataSize)
+    std::uint64_t   dataSize)
 {
     auto& dstBufferDbg = LLGL_DBG_CAST(DbgBuffer&, dstBuffer);
 
@@ -186,7 +239,10 @@ void DbgCommandBuffer::UpdateBuffer(
         ValidateBufferRange(dstBufferDbg, dstOffset, dataSize, "destination range");
     }
 
-    LLGL_DBG_COMMAND( "UpdateBuffer", instance.UpdateBuffer(dstBufferDbg.instance, dstOffset, data, dataSize) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.UpdateBuffer(dstBufferDbg.instance, dstOffset, data, dataSize),
+        "UpdateBuffer(%s, %" PRIu64 ", %p, %u)", GetResourceLabel(dstBuffer), dstOffset, data, static_cast<std::uint32_t>(dataSize)
+    );
 
     profile_.commandBufferRecord.bufferUpdates++;
 }
@@ -211,7 +267,10 @@ void DbgCommandBuffer::CopyBuffer(
         ValidateBindBufferFlags(srcBufferDbg, BindFlags::CopySrc);
     }
 
-    LLGL_DBG_COMMAND( "CopyBuffer", instance.CopyBuffer(dstBufferDbg.instance, dstOffset, srcBufferDbg.instance, srcOffset, size) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.CopyBuffer(dstBufferDbg.instance, dstOffset, srcBufferDbg.instance, srcOffset, size),
+        "CopyBuffer(%s, %" PRIu64 ", %s, %" PRIu64 ", %" PRIu64 ")", GetResourceLabel(dstBuffer), dstOffset, GetResourceLabel(srcBuffer), srcOffset, size
+    );
 
     profile_.commandBufferRecord.bufferCopies++;
 }
@@ -245,7 +304,10 @@ void DbgCommandBuffer::CopyBufferFromTexture(
         ValidateTextureBufferCopyStrides(srcTextureDbg, rowStride, layerStride, srcRegion.extent);
     }
 
-    LLGL_DBG_COMMAND( "CopyBufferFromTexture", instance.CopyBufferFromTexture(dstBufferDbg.instance, dstOffset, srcTextureDbg.instance, srcRegion, rowStride, layerStride) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.CopyBufferFromTexture(dstBufferDbg.instance, dstOffset, srcTextureDbg.instance, srcRegion, rowStride, layerStride),
+        "CopyBufferFromTexture(%s, %" PRIu64 ", %s, {region}, %u, %u)", GetResourceLabel(dstBuffer), dstOffset, GetResourceLabel(srcTexture), rowStride, layerStride
+    );
 
     profile_.commandBufferRecord.bufferCopies++;
 }
@@ -277,7 +339,10 @@ void DbgCommandBuffer::FillBuffer(
         }
     }
 
-    LLGL_DBG_COMMAND( "FillBuffer", instance.FillBuffer(dstBufferDbg.instance, dstOffset, value, fillSize) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.FillBuffer(dstBufferDbg.instance, dstOffset, value, fillSize),
+        "FillBuffer(%s, %" PRIu64 ", %u, %" PRIu64 ")", GetResourceLabel(dstBuffer), dstOffset, value, fillSize
+    );
 
     profile_.commandBufferRecord.bufferFills++;
 }
@@ -300,7 +365,10 @@ void DbgCommandBuffer::CopyTexture(
         ValidateBindTextureFlags(srcTextureDbg, BindFlags::CopySrc);
     }
 
-    LLGL_DBG_COMMAND( "CopyTexture", instance.CopyTexture(dstTextureDbg.instance, dstLocation, srcTextureDbg.instance, srcLocation, extent) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.CopyTexture(dstTextureDbg.instance, dstLocation, srcTextureDbg.instance, srcLocation, extent),
+        "CopyTexture(%s, {dstLoc}, %s, {srcLoc}, {extent})", GetResourceLabel(dstTexture), GetResourceLabel(srcTexture)
+    );
 
     profile_.commandBufferRecord.textureCopies++;
 }
@@ -327,7 +395,10 @@ void DbgCommandBuffer::CopyTextureFromBuffer(
         ValidateTextureBufferCopyStrides(dstTextureDbg, rowStride, layerStride, dstRegion.extent);
     }
 
-    LLGL_DBG_COMMAND( "CopyTextureFromBuffer", instance.CopyTextureFromBuffer(dstTextureDbg.instance, dstRegion, srcBufferDbg.instance, srcOffset, rowStride, layerStride) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.CopyTextureFromBuffer(dstTextureDbg.instance, dstRegion, srcBufferDbg.instance, srcOffset, rowStride, layerStride),
+        "CopyTextureFromBuffer(%s, {region}, %s, %" PRIu64 ", %u, %u)", GetResourceLabel(dstTexture), GetResourceLabel(srcBuffer), srcOffset, rowStride, layerStride
+    );
 
     profile_.commandBufferRecord.textureCopies++;
 }
@@ -346,19 +417,13 @@ void DbgCommandBuffer::CopyTextureFromFramebuffer(
         AssertInsideRenderPass();
         ValidateBindTextureFlags(dstTextureDbg, BindFlags::CopyDst);
         ValidateTextureRegion(dstTextureDbg, dstRegion);
-        if (dstRegion.subresource.numArrayLayers > 1)
-            LLGL_DBG_ERROR(ErrorType::InvalidArgument, "cannot copy texture from framebuffer with number of array layers greater than 1");
-        if (dstRegion.extent.depth != 1)
-            LLGL_DBG_ERROR(ErrorType::InvalidArgument, "cannot copy texture from framebuffer with a depth extent of %u", dstRegion.extent.depth);
-        if (bindings_.swapChain != nullptr)
-            bindings_.swapChain->NotifyFramebufferUsed();
-        else
-            LLGL_DBG_ERROR(ErrorType::InvalidState, "copy texture from framebuffer is only supported for SwapChain framebuffers");
-        if (DbgRenderTarget* renderTargetDbg = bindings_.renderTarget)
-            ValidateRenderTargetRange(*renderTargetDbg, srcOffset, Extent2D{ dstRegion.extent.width, dstRegion.extent.height });
+        ValidateTextureRegionForFramebuffer(dstRegion, srcOffset);
     }
 
-    LLGL_DBG_COMMAND( "CopyTextureFromFramebuffer", instance.CopyTextureFromFramebuffer(dstTextureDbg.instance, dstRegion, srcOffset) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.CopyTextureFromFramebuffer(dstTextureDbg.instance, dstRegion, srcOffset),
+        "CopyTextureFromFramebuffer(%s, {region}, (x=%d, y=%d)})", GetResourceLabel(dstTexture), srcOffset.x, srcOffset.y
+    );
 
     profile_.commandBufferRecord.textureCopies++;
 }
@@ -374,7 +439,10 @@ void DbgCommandBuffer::GenerateMips(Texture& texture)
         ValidateGenerateMips(textureDbg);
     }
 
-    LLGL_DBG_COMMAND( "GenerateMips", instance.GenerateMips(textureDbg.instance) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.GenerateMips(textureDbg.instance),
+        "GenerateMips(%s)", GetResourceLabel(texture)
+    );
 
     profile_.commandBufferRecord.mipMapsGenerations++;
 }
@@ -390,7 +458,11 @@ void DbgCommandBuffer::GenerateMips(Texture& texture, const TextureSubresource& 
         ValidateGenerateMips(textureDbg, &subresource);
     }
 
-    LLGL_DBG_COMMAND( "GenerateMips", instance.GenerateMips(textureDbg.instance, subresource) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.GenerateMips(textureDbg.instance, subresource),
+        "GenerateMips(%s, (arrays=[%u:+%u], mips=[%u:+%u]))",
+        GetResourceLabel(texture), subresource.baseArrayLayer, subresource.numArrayLayers, subresource.baseMipLevel, subresource.numMipLevels
+    );
 
     profile_.commandBufferRecord.mipMapsGenerations++;
 }
@@ -409,7 +481,13 @@ void DbgCommandBuffer::SetViewport(const Viewport& viewport)
         bindings_.numViewports = 1;
     }
 
-    LLGL_DBG_COMMAND( "SetViewport", instance.SetViewport(viewport) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.SetViewport(viewport),
+        "SetViewport(%d, %d, %d, %d, %f, %f)",
+        static_cast<int>(viewport.x), static_cast<int>(viewport.y),
+        static_cast<int>(viewport.width), static_cast<int>(viewport.height),
+        viewport.minDepth, viewport.maxDepth
+    );
 }
 
 void DbgCommandBuffer::SetViewports(std::uint32_t numViewports, const Viewport* viewports)
@@ -443,7 +521,10 @@ void DbgCommandBuffer::SetViewports(std::uint32_t numViewports, const Viewport* 
         bindings_.numViewports = numViewports;
     }
 
-    LLGL_DBG_COMMAND( "SetViewports", instance.SetViewports(numViewports, viewports) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.SetViewports(numViewports, viewports),
+        "SetViewports(%u, %p)", numViewports, viewports
+    );
 }
 
 void DbgCommandBuffer::SetScissor(const Scissor& scissor)
@@ -457,7 +538,10 @@ void DbgCommandBuffer::SetScissor(const Scissor& scissor)
         SetAndValidateScissorRects(1, &scissor);
     }
 
-    LLGL_DBG_COMMAND( "SetScissor", instance.SetScissor(scissor) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.SetScissor(scissor),
+        "SetScissor(%d, %d, %d, %d)", scissor.x, scissor.y, scissor.width, scissor.height
+    );
 }
 
 void DbgCommandBuffer::SetScissors(std::uint32_t numScissors, const Scissor* scissors)
@@ -472,7 +556,10 @@ void DbgCommandBuffer::SetScissors(std::uint32_t numScissors, const Scissor* sci
             LLGL_DBG_WARN(WarningType::PointlessOperation, "no scissor rectangles are specified");
     }
 
-    LLGL_DBG_COMMAND( "SetScissors", instance.SetScissors(numScissors, scissors) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.SetScissors(numScissors, scissors),
+        "SetScissors(%u, %p)", numScissors, scissors
+    );
 }
 
 /* ----- Buffers ------ */
@@ -491,7 +578,10 @@ void DbgCommandBuffer::SetVertexBuffer(Buffer& buffer)
         bindings_.numVertexBuffers      = 1;
     }
 
-    LLGL_DBG_COMMAND( "SetVertexBuffer", instance.SetVertexBuffer(bufferDbg.instance) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.SetVertexBuffer(bufferDbg.instance),
+        "SetVertexBuffer(%s)", GetResourceLabel(buffer)
+    );
 
     profile_.commandBufferRecord.vertexBufferBindings++;
 }
@@ -509,7 +599,7 @@ void DbgCommandBuffer::SetVertexBufferArray(BufferArray& bufferArray)
         bindings_.numVertexBuffers  = static_cast<std::uint32_t>(bufferArrayDbg.buffers.size());
     }
 
-    LLGL_DBG_COMMAND( "SetVertexBufferArray", instance.SetVertexBufferArray(bufferArrayDbg.instance) );
+    LLGL_DBG_COMMAND( instance.SetVertexBufferArray(bufferArrayDbg.instance), "SetVertexBufferArray()" );
 
     profile_.commandBufferRecord.vertexBufferBindings++;
 }
@@ -530,7 +620,10 @@ void DbgCommandBuffer::SetIndexBuffer(Buffer& buffer)
         bindings_.indexBufferOffset     = 0;
     }
 
-    LLGL_DBG_COMMAND( "SetIndexBuffer", instance.SetIndexBuffer(bufferDbg.instance) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.SetIndexBuffer(bufferDbg.instance),
+        "SetIndexBuffer(%s)", GetResourceLabel(buffer)
+    );
 
     profile_.commandBufferRecord.indexBufferBindings++;
 }
@@ -561,7 +654,10 @@ void DbgCommandBuffer::SetIndexBuffer(Buffer& buffer, const Format format, std::
         }
     }
 
-    LLGL_DBG_COMMAND( "SetIndexBuffer", instance.SetIndexBuffer(bufferDbg.instance, format, offset) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.SetIndexBuffer(bufferDbg.instance, format, offset),
+        "SetIndexBuffer(%s, %s, %" PRIu64 ")", GetResourceLabel(buffer), ToString(format), offset
+    );
 
     profile_.commandBufferRecord.indexBufferBindings++;
 }
@@ -580,7 +676,10 @@ void DbgCommandBuffer::SetResourceHeap(ResourceHeap& resourceHeap, std::uint32_t
         bindings_.bindingTable.resourceHeap = &resourceHeap;
     }
 
-    LLGL_DBG_COMMAND( "SetResourceHeap", instance.SetResourceHeap(resourceHeapDbg.instance, descriptorSet) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.SetResourceHeap(resourceHeapDbg.instance, descriptorSet),
+        "SetResourceHeap(%s, %u)", GetLabelOrDefault(resourceHeapDbg.label, "LLGL::ResourceHeap"), descriptorSet
+    );
 
     profile_.commandBufferRecord.resourceHeapBindings++;
 }
@@ -625,7 +724,10 @@ void DbgCommandBuffer::SetResource(std::uint32_t descriptor, Resource& resource)
                 );
             }
 
-            LLGL_DBG_COMMAND( "SetResource", instance.SetResource(descriptor, bufferDbg.instance) );
+            LLGL_DBG_COMMAND_EXT(
+                instance.SetResource(descriptor, bufferDbg.instance),
+                "SetResource(%u, %s)", descriptor, GetResourceLabel(resource)
+            );
 
             /* Record binding for profiling */
             if (bindingDesc != nullptr)
@@ -655,7 +757,10 @@ void DbgCommandBuffer::SetResource(std::uint32_t descriptor, Resource& resource)
                 );
             }
 
-            LLGL_DBG_COMMAND( "SetResource", instance.SetResource(descriptor, textureDbg.instance) );
+            LLGL_DBG_COMMAND_EXT(
+                instance.SetResource(descriptor, textureDbg.instance),
+                "SetResource(%u, %s)", descriptor, GetResourceLabel(resource)
+            );
 
             /* Record binding for profiling */
             if (bindingDesc != nullptr)
@@ -676,7 +781,10 @@ void DbgCommandBuffer::SetResource(std::uint32_t descriptor, Resource& resource)
                 ValidateBindFlags(0, bindingDesc->bindFlags, 0, "LLGL::Sampler");
 
             /* Forward sampler resource to wrapped instance */
-            LLGL_DBG_COMMAND( "SetResource", instance.SetResource(descriptor, resource) );
+            LLGL_DBG_COMMAND_EXT(
+                instance.SetResource(descriptor, resource),
+                "SetResource(%u, %s)", descriptor, GetResourceLabel(resource)
+            );
 
             /* Record binding for profiling */
             profile_.commandBufferRecord.samplerBindings++;
@@ -742,7 +850,10 @@ void DbgCommandBuffer::ResourceBarrier(
         }
     }
 
-    LLGL_DBG_COMMAND( "ResourceBarrier", instance.ResourceBarrier(numBuffers, bufferInstances.data(), numTextures, textureInstances.data()) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.ResourceBarrier(numBuffers, bufferInstances.data(), numTextures, textureInstances.data()),
+        "ResourceBarrier(%u, %p, %u, %p)", numBuffers, buffers, numTextures, textures
+    );
 }
 
 /* ----- Render Passes ----- */
@@ -806,7 +917,7 @@ void DbgCommandBuffer::BeginRenderPass(
             ValidateSwapBufferIndex(swapChainDbg, actualSwapBufferIndex);
         }
 
-        LLGL_DBG_START_TIMER("BeginRenderPass");
+        LLGL_DBG_START_TIMER_EXT("BeginRenderPass(%s)", GetLabelOrDefault(swapChainDbg.label, "LLGL::SwapChain"));
         instance.BeginRenderPass(swapChainDbg.instance, renderPassInstance, numClearValues, clearValues, swapBufferIndex);
     }
     else
@@ -816,7 +927,7 @@ void DbgCommandBuffer::BeginRenderPass(
         bindings_.swapChain     = nullptr;
         bindings_.renderTarget  = &renderTargetDbg;
 
-        LLGL_DBG_START_TIMER("BeginRenderPass");
+        LLGL_DBG_START_TIMER_EXT("BeginRenderPass(%s)", GetLabelOrDefault(renderTargetDbg.label, "LLGL::RenderTarget"));
         instance.BeginRenderPass(renderTargetDbg.instance, renderPassInstance, numClearValues, clearValues, swapBufferIndex);
     }
 
@@ -847,7 +958,7 @@ void DbgCommandBuffer::Clear(long flags, const ClearValue& clearValue)
         AssertInsideRenderPass();
     }
 
-    LLGL_DBG_COMMAND( "Clear", instance.Clear(flags, clearValue) );
+    LLGL_DBG_COMMAND( instance.Clear(flags, clearValue), "Clear()" );
 
     profile_.commandBufferRecord.attachmentClears++;
 }
@@ -863,7 +974,10 @@ void DbgCommandBuffer::ClearAttachments(std::uint32_t numAttachments, const Atta
             ValidateAttachmentClear(attachments[i]);
     }
 
-    LLGL_DBG_COMMAND( "ClearAttachments", instance.ClearAttachments(numAttachments, attachments) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.ClearAttachments(numAttachments, attachments),
+        "ClearAttachments(%u, %p)", numAttachments, attachments
+    );
 
     profile_.commandBufferRecord.attachmentClears++;
 }
@@ -924,7 +1038,10 @@ void DbgCommandBuffer::SetPipelineState(PipelineState& pipelineState)
         topology_ = pipelineStateDbg.graphicsDesc.primitiveTopology;
 
     /* Call wrapped function */
-    LLGL_DBG_COMMAND( "SetPipelineState", instance.SetPipelineState(pipelineStateDbg.instance) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.SetPipelineState(pipelineStateDbg.instance),
+        "SetPipelineState(%s)", GetLabelOrDefault(pipelineStateDbg.label, "LLGL::PipelineState")
+    );
 
     if (pipelineStateDbg.isGraphicsPSO)
         profile_.commandBufferRecord.graphicsPipelineBindings++;
@@ -945,7 +1062,10 @@ void DbgCommandBuffer::SetBlendFactor(const float color[4])
         }
     }
 
-    LLGL_DBG_COMMAND( "SetBlendFactor", instance.SetBlendFactor(color) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.SetBlendFactor(color),
+        "SetBlendFactor(%f, %f, %f, %f)", color[0], color[1], color[2], color[3]
+    );
 }
 
 void DbgCommandBuffer::SetStencilReference(std::uint32_t reference, const StencilFace stencilFace)
@@ -961,7 +1081,10 @@ void DbgCommandBuffer::SetStencilReference(std::uint32_t reference, const Stenci
         }
     }
 
-    LLGL_DBG_COMMAND( "SetStencilReference", instance.SetStencilReference(reference, stencilFace) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.SetStencilReference(reference, stencilFace),
+        "SetStencilReference(%u, {face})", reference
+    );
 }
 
 void DbgCommandBuffer::SetUniforms(std::uint32_t first, const void* data, std::uint16_t dataSize)
@@ -979,7 +1102,10 @@ void DbgCommandBuffer::SetUniforms(std::uint32_t first, const void* data, std::u
             LLGL_DBG_ERROR(ErrorType::InvalidArgument, "cannot set uniforms without pipeline state");
     }
 
-    LLGL_DBG_COMMAND( "SetUniforms", instance.SetUniforms(first, data, dataSize) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.SetUniforms(first, data, dataSize),
+        "SetUniforms(%u, %p, %u)", first, data, static_cast<std::uint32_t>(dataSize)
+    );
 }
 
 /* ----- Queries ----- */
@@ -1147,7 +1273,10 @@ void DbgCommandBuffer::Draw(std::uint32_t numVertices, std::uint32_t firstVertex
     if (LLGL_DBG_SOURCE())
         ValidateDrawCmd(numVertices, firstVertex, 1, 0);
 
-    LLGL_DBG_COMMAND( "Draw", instance.Draw(numVertices, firstVertex) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.Draw(numVertices, firstVertex),
+        "Draw(%u, %u)", numVertices, firstVertex
+    );
 
     profile_.commandBufferRecord.drawCommands++;
 }
@@ -1157,7 +1286,10 @@ void DbgCommandBuffer::DrawIndexed(std::uint32_t numIndices, std::uint32_t first
     if (LLGL_DBG_SOURCE())
         ValidateDrawIndexedCmd(numIndices, 1, firstIndex, 0, 0);
 
-    LLGL_DBG_COMMAND( "DrawIndexed", instance.DrawIndexed(numIndices, firstIndex) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.DrawIndexed(numIndices, firstIndex),
+        "DrawIndexed(%u, %u)", numIndices, firstIndex
+    );
 
     profile_.commandBufferRecord.drawCommands++;
 }
@@ -1167,7 +1299,10 @@ void DbgCommandBuffer::DrawIndexed(std::uint32_t numIndices, std::uint32_t first
     if (LLGL_DBG_SOURCE())
         ValidateDrawIndexedCmd(numIndices, 1, firstIndex, vertexOffset, 0);
 
-    LLGL_DBG_COMMAND( "DrawIndexed", instance.DrawIndexed(numIndices, firstIndex, vertexOffset) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.DrawIndexed(numIndices, firstIndex, vertexOffset),
+        "DrawIndexed(%u, %u, %d)", numIndices, firstIndex, vertexOffset
+    );
 
     profile_.commandBufferRecord.drawCommands++;
 }
@@ -1180,7 +1315,10 @@ void DbgCommandBuffer::DrawInstanced(std::uint32_t numVertices, std::uint32_t fi
         ValidateDrawCmd(numVertices, firstVertex, numInstances, 0);
     }
 
-    LLGL_DBG_COMMAND( "DrawInstanced", instance.DrawInstanced(numVertices, firstVertex, numInstances) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.DrawInstanced(numVertices, firstVertex, numInstances),
+        "DrawInstanced(%u, %u, %u)", numVertices, firstVertex, numInstances
+    );
 
     profile_.commandBufferRecord.drawCommands++;
 }
@@ -1194,7 +1332,10 @@ void DbgCommandBuffer::DrawInstanced(std::uint32_t numVertices, std::uint32_t fi
         ValidateDrawCmd(numVertices, firstVertex, numInstances, firstInstance);
     }
 
-    LLGL_DBG_COMMAND( "DrawInstanced", instance.DrawInstanced(numVertices, firstVertex, numInstances, firstInstance) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.DrawInstanced(numVertices, firstVertex, numInstances, firstInstance),
+        "DrawInstanced(%u, %u, %u, %u)", numVertices, firstVertex, numInstances, firstInstance
+    );
 
     profile_.commandBufferRecord.drawCommands++;
 }
@@ -1207,7 +1348,10 @@ void DbgCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uint3
         ValidateDrawIndexedCmd(numIndices, numInstances, firstIndex, 0, 0);
     }
 
-    LLGL_DBG_COMMAND( "DrawIndexedInstanced", instance.DrawIndexedInstanced(numIndices, numInstances, firstIndex) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.DrawIndexedInstanced(numIndices, numInstances, firstIndex),
+        "DrawIndexedInstanced(%u, %u, %u)", numIndices, numInstances, firstIndex
+    );
 
     profile_.commandBufferRecord.drawCommands++;
 }
@@ -1220,7 +1364,10 @@ void DbgCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uint3
         ValidateDrawIndexedCmd(numIndices, numInstances, firstIndex, vertexOffset, 0);
     }
 
-    LLGL_DBG_COMMAND( "DrawIndexedInstanced", instance.DrawIndexedInstanced(numIndices, numInstances, firstIndex, vertexOffset) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.DrawIndexedInstanced(numIndices, numInstances, firstIndex, vertexOffset),
+        "DrawIndexedInstanced(%u, %u, %u, %d)", numIndices, numInstances, firstIndex, vertexOffset
+    );
 
     profile_.commandBufferRecord.drawCommands++;
 }
@@ -1234,7 +1381,10 @@ void DbgCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uint3
         ValidateDrawIndexedCmd(numIndices, numInstances, firstIndex, vertexOffset, firstInstance);
     }
 
-    LLGL_DBG_COMMAND( "DrawIndexedInstanced", instance.DrawIndexedInstanced(numIndices, numInstances, firstIndex, vertexOffset, firstInstance) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.DrawIndexedInstanced(numIndices, numInstances, firstIndex, vertexOffset, firstInstance),
+        "DrawIndexedInstanced(%u, %u, %u, %d, %u)", numIndices, numInstances, firstIndex, vertexOffset, firstInstance
+    );
 
     profile_.commandBufferRecord.drawCommands++;
 }
@@ -1251,7 +1401,10 @@ void DbgCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset)
         ValidateAddressAlignment(offset, 4, "<offset> parameter");
     }
 
-    LLGL_DBG_COMMAND( "DrawIndirect", instance.DrawIndirect(bufferDbg.instance, offset) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.DrawIndirect(bufferDbg.instance, offset),
+        "DrawIndirect(%s, %" PRIu64 ")", GetResourceLabel(buffer), offset
+    );
 
     profile_.commandBufferRecord.drawCommands++;
 }
@@ -1269,7 +1422,10 @@ void DbgCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset, std::u
         ValidateAddressAlignment(stride, 4, "<stride> parameter");
     }
 
-    LLGL_DBG_COMMAND( "DrawIndirect", instance.DrawIndirect(bufferDbg.instance, offset, numCommands, stride) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.DrawIndirect(bufferDbg.instance, offset, numCommands, stride),
+        "DrawIndirect(%s, %" PRIu64 ", %u, %u)", GetResourceLabel(buffer), offset, numCommands, stride
+    );
 
     profile_.commandBufferRecord.drawCommands += numCommands;
 }
@@ -1286,7 +1442,10 @@ void DbgCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset)
         ValidateAddressAlignment(offset, 4, "<offset> parameter");
     }
 
-    LLGL_DBG_COMMAND( "DrawIndexedIndirect", instance.DrawIndexedIndirect(bufferDbg.instance, offset) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.DrawIndexedIndirect(bufferDbg.instance, offset),
+        "DrawIndexedIndirect(%s, %" PRIu64 ")", GetResourceLabel(buffer), offset
+    );
 
     profile_.commandBufferRecord.drawCommands++;
 }
@@ -1304,7 +1463,10 @@ void DbgCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset,
         ValidateAddressAlignment(stride, 4, "<stride> parameter");
     }
 
-    LLGL_DBG_COMMAND( "DrawIndexedIndirect", instance.DrawIndexedIndirect(bufferDbg.instance, offset, numCommands, stride) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.DrawIndexedIndirect(bufferDbg.instance, offset, numCommands, stride),
+        "DrawIndexedIndirect(%s, %" PRIu64 ", %u, %u)", GetResourceLabel(buffer), offset, numCommands, stride
+    );
 
     profile_.commandBufferRecord.drawCommands += numCommands;
 }
@@ -1317,7 +1479,7 @@ void DbgCommandBuffer::DrawStreamOutput()
         ValidateDrawStreamOutputCmd();
     }
 
-    LLGL_DBG_COMMAND( "DrawStreamOutput", instance.DrawStreamOutput() );
+    LLGL_DBG_COMMAND( instance.DrawStreamOutput(), "DrawStreamOutput()" );
 
     profile_.commandBufferRecord.drawCommands++;
 }
@@ -1338,7 +1500,10 @@ void DbgCommandBuffer::Dispatch(std::uint32_t numWorkGroupsX, std::uint32_t numW
         ValidateBindingTable();
     }
 
-    LLGL_DBG_COMMAND( "Dispatch", instance.Dispatch(numWorkGroupsX, numWorkGroupsY, numWorkGroupsZ) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.Dispatch(numWorkGroupsX, numWorkGroupsY, numWorkGroupsZ),
+        "Dispatch(%u, %u, %u)", numWorkGroupsX, numWorkGroupsY, numWorkGroupsZ
+    );
 
     profile_.commandBufferRecord.dispatchCommands++;
 }
@@ -1355,7 +1520,10 @@ void DbgCommandBuffer::DispatchIndirect(Buffer& buffer, std::uint64_t offset)
         ValidateBindingTable();
     }
 
-    LLGL_DBG_COMMAND( "DispatchIndirect", instance.DispatchIndirect(bufferDbg.instance, offset) );
+    LLGL_DBG_COMMAND_EXT(
+        instance.DispatchIndirect(bufferDbg.instance, offset),
+        "DispatchIndirect(%s, %" PRIu64 ")", GetResourceLabel(buffer), offset
+    );
 
     profile_.commandBufferRecord.dispatchCommands++;
 }
@@ -1375,7 +1543,8 @@ void DbgCommandBuffer::PushDebugGroup(const char* name)
 
     debugGroups_.push(name);
 
-    LLGL_DBG_START_TIMER("PushDebugGroup");
+    UTF8String annotation = UTF8String::Printf("PushDebugGroup(%s)", name);
+    LLGL_DBG_START_TIMER((StringLiteral{ annotation.c_str(), CopyTag{} }));
     instance.PushDebugGroup(name);
 }
 
@@ -1399,7 +1568,7 @@ void DbgCommandBuffer::PopDebugGroup()
 
 void DbgCommandBuffer::DoNativeCommand(const void* nativeCommand, std::size_t nativeCommandSize)
 {
-    LLGL_DBG_COMMAND( "DoNativeCommand", instance.DoNativeCommand(nativeCommand, nativeCommandSize) );
+    LLGL_DBG_COMMAND( instance.DoNativeCommand(nativeCommand, nativeCommandSize), "DoNativeCommand" );
 }
 
 bool DbgCommandBuffer::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
@@ -1987,18 +2156,12 @@ void DbgCommandBuffer::ValidateBindTextureFlags(DbgTexture& textureDbg, long bin
 void DbgCommandBuffer::ValidateTextureRegion(DbgTexture& textureDbg, const TextureRegion& region)
 {
     /* Validate MIP-map range */
-    if (region.subresource.numMipLevels == 0)
+    if (region.subresource.numMipLevels != 1)
     {
         LLGL_DBG_ERROR(
             ErrorType::InvalidArgument,
-            "invalid texture region with MIP-map count of 0"
-        );
-    }
-    else if (region.subresource.numMipLevels > 1)
-    {
-        LLGL_DBG_ERROR(
-            ErrorType::InvalidArgument,
-            "invalid texture region with MIP-map count greater than 1"
+            "invalid MIP-map count for texture region: expected 1, but %u was specified",
+            region.subresource.numMipLevels
         );
     }
     else if (region.subresource.baseMipLevel + region.subresource.numMipLevels > textureDbg.mipLevels)
@@ -2077,6 +2240,51 @@ void DbgCommandBuffer::ValidateTextureRegion(DbgTexture& textureDbg, const Textu
             );
         }
     }
+}
+
+void DbgCommandBuffer::ValidateTextureRegionForFramebuffer(const TextureRegion& region, const Offset2D& offset)
+{
+    if (region.subresource.numArrayLayers != 1)
+    {
+        LLGL_DBG_ERROR(
+            ErrorType::InvalidArgument,
+            "cannot copy texture from framebuffer with number of array layers: expected 1, but %u was specified",
+            region.subresource.numArrayLayers
+        );
+    }
+    if (region.extent.depth != 1)
+    {
+        LLGL_DBG_ERROR(
+            ErrorType::InvalidArgument,
+            "cannot copy texture from framebuffer with a depth extent: expected 1, but %u was specified",
+            region.extent.depth
+        );
+    }
+
+    if (bindings_.swapChain != nullptr)
+    {
+        bindings_.swapChain->NotifyFramebufferUsed();
+        const Extent2D framebufferExtent = bindings_.swapChain->GetResolution();
+
+        if (offset.x < 0 ||
+            offset.y < 0 ||
+            region.extent.width  + static_cast<std::uint32_t>(offset.x) > framebufferExtent.width ||
+            region.extent.height + static_cast<std::uint32_t>(offset.y) > framebufferExtent.height)
+        {
+            LLGL_DBG_ERROR(
+                ErrorType::UndefinedBehavior,
+                "copy texture from framebuffer outside of bounds is undefined behavior: framebuffer=(%u x %u), region=(left=%d, top=%d, right=%d, bottom=%d)",
+                framebufferExtent.width, framebufferExtent.height, offset.x, offset.y,
+                static_cast<std::int32_t>(region.extent.width) + offset.x,
+                static_cast<std::int32_t>(region.extent.height) + offset.y
+            );
+        }
+    }
+    else
+        LLGL_DBG_ERROR(ErrorType::InvalidState, "copy texture from framebuffer is only supported for SwapChain framebuffers");
+
+    if (DbgRenderTarget* renderTargetDbg = bindings_.renderTarget)
+        ValidateRenderTargetRange(*renderTargetDbg, offset, Extent2D{ region.extent.width, region.extent.height });
 }
 
 void DbgCommandBuffer::ValidateIndexType(const Format format)
@@ -2311,8 +2519,8 @@ const BindingDescriptor* DbgCommandBuffer::GetAndValidateResourceDescFromPipelin
     {
         LLGL_DBG_ERROR(
             ErrorType::InvalidArgument,
-            "invalid resource type in pipeline for descriptor[%u]: %s specified but expected %s",
-            descriptor, ToString(resource.GetResourceType()), ToString(bindingDesc->type)
+            "invalid resource type in pipeline for descriptor[%u]: expected %s, but %s was specified",
+            descriptor, ToString(bindingDesc->type), ToString(resource.GetResourceType())
         );
         return nullptr;
     }
@@ -2638,9 +2846,9 @@ void DbgCommandBuffer::ResetBindingTable(const DbgPipelineLayout* pipelineLayout
         ResetBindingTableZero(bindings_.bindingTable);
 }
 
-void DbgCommandBuffer::StartTimer(const char* annotation)
+void DbgCommandBuffer::StartTimer(StringLiteral annotation)
 {
-    queryTimerPool_.Start(annotation);
+    queryTimerPool_.Start(std::move(annotation));
 }
 
 void DbgCommandBuffer::EndTimer()
@@ -2669,7 +2877,7 @@ void DbgCommandBuffer::SetAndValidateScissorRects(std::uint32_t numScissors, con
     for_range(i, numScissors)
     {
         bindings_.scissorRects[i] = scissors[i];
-        if (scissors[i].x < INT16_MIN || scissors[i].y < INT16_MIN ||
+        if (scissors[i].x     < INT16_MIN || scissors[i].y      < INT16_MIN ||
             scissors[i].width > INT16_MAX || scissors[i].height > INT16_MAX)
         {
             LLGL_DBG_WARN(

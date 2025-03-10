@@ -35,9 +35,21 @@ namespace LLGL
 {
 
 
+static bool IsDebugLayerEnabled(long flags)
+{
+    return ((flags & RenderSystemFlags::DebugDevice) != 0);
+}
+
+static bool IsDebugBreakOnErrorEnabled(long flags)
+{
+    constexpr long requiredFlags = (RenderSystemFlags::DebugDevice | RenderSystemFlags::DebugBreakOnError);
+    return ((flags & requiredFlags) == requiredFlags);
+}
+
 VKRenderSystem::VKRenderSystem(const RenderSystemDescriptor& renderSystemDesc) :
-    instance_          { vkDestroyInstance                                                },
-    debugLayerEnabled_ { ((renderSystemDesc.flags & RenderSystemFlags::DebugDevice) != 0) }
+    instance_              { vkDestroyInstance                                        },
+    isDebugLayerEnabled_   { LLGL::IsDebugLayerEnabled(renderSystemDesc.flags)        },
+    isBreakOnErrorEnabled_ { LLGL::IsDebugBreakOnErrorEnabled(renderSystemDesc.flags) }
 {
     /* Extract optional renderer configuartion */
     auto* rendererConfigVK = GetRendererConfiguration<RendererConfigurationVulkan>(renderSystemDesc);
@@ -49,7 +61,7 @@ VKRenderSystem::VKRenderSystem(const RenderSystemDescriptor& renderSystemDesc) :
     {
         /* Store weak references to native handles */
         instance_ = VKPtr<VkInstance>{ customNativeHandle->instance };
-        if (debugLayerEnabled_)
+        if (isDebugLayerEnabled_)
             CreateDebugReportCallback();
         VKLoadInstanceExtensions(instance_);
         if (!PickPhysicalDevice(preferredDeviceFlags, customNativeHandle->physicalDevice))
@@ -60,7 +72,7 @@ VKRenderSystem::VKRenderSystem(const RenderSystemDescriptor& renderSystemDesc) :
     {
         /* Create Vulkan instance and device objects */
         CreateInstance(rendererConfigVK);
-        if (debugLayerEnabled_)
+        if (isDebugLayerEnabled_)
             CreateDebugReportCallback();
         VKLoadInstanceExtensions(instance_);
         if (!PickPhysicalDevice(preferredDeviceFlags))
@@ -91,7 +103,9 @@ VKRenderSystem::~VKRenderSystem()
 
 SwapChain* VKRenderSystem::CreateSwapChain(const SwapChainDescriptor& swapChainDesc, const std::shared_ptr<Surface>& surface)
 {
-    return swapChains_.emplace<VKSwapChain>(instance_, physicalDevice_, device_, *deviceMemoryMngr_, swapChainDesc, surface, GetRendererInfo());
+    return swapChains_.emplace<VKSwapChain>(
+        instance_, physicalDevice_, device_, *deviceMemoryMngr_, swapChainDesc, surface, GetRendererInfo()
+    );
 }
 
 void VKRenderSystem::Release(SwapChain& swapChain)
@@ -110,7 +124,9 @@ CommandQueue* VKRenderSystem::GetCommandQueue()
 
 CommandBuffer* VKRenderSystem::CreateCommandBuffer(const CommandBufferDescriptor& commandBufferDesc)
 {
-    return commandBuffers_.emplace<VKCommandBuffer>(physicalDevice_, device_, device_.GetVkQueue(), device_.GetQueueFamilyIndices(), commandBufferDesc);
+    return commandBuffers_.emplace<VKCommandBuffer>(
+        physicalDevice_, device_, device_.GetVkQueue(), *deviceMemoryMngr_, device_.GetQueueFamilyIndices(), commandBufferDesc
+    );
 }
 
 void VKRenderSystem::Release(CommandBuffer& commandBuffer)
@@ -312,7 +328,8 @@ Texture* VKRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, con
     const void* initialData = nullptr;
     DynamicByteArray intermediateData;
 
-    std::uint32_t srcRowStride = extent.width * bytesPerPixel;
+    std::uint32_t srcRowStride      = textureDesc.extent.width * bytesPerPixel;
+    std::uint32_t srcLayerStride    = textureDesc.extent.height * srcRowStride;
 
     if (initialImage != nullptr)
     {
@@ -321,8 +338,12 @@ Texture* VKRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, con
         /* Check if image data must be converted */
         if (!isCompressed)
         {
-            const std::uint32_t srcBytesPerPixel = static_cast<std::uint32_t>(GetMemoryFootprint(srcImageView.format, srcImageView.dataType, 1));
-            srcRowStride = (srcImageView.rowStride > 0 ? srcImageView.rowStride : extent.width * srcBytesPerPixel);
+            const std::uint32_t srcBytesPerPixel        = static_cast<std::uint32_t>(GetMemoryFootprint(srcImageView.format, srcImageView.dataType, 1));
+            const std::uint32_t srcDefaultRowStride     = (textureDesc.extent.width  * srcBytesPerPixel);
+            const std::uint32_t srcDefaultLayerStride   = (textureDesc.extent.height * srcDefaultRowStride);
+
+            srcRowStride    = std::max<std::uint32_t>(srcImageView.rowStride, srcDefaultRowStride);
+            srcLayerStride  = std::max<std::uint32_t>(srcImageView.layerStride, srcDefaultLayerStride);
 
             /* Check if amount of padding memory is small enough to justify a larger GPU buffer upload */
             bool rowStrideNeedsConversion = (srcImageView.rowStride != 0 && srcImageView.rowStride != extent.width * srcBytesPerPixel);
@@ -343,27 +364,23 @@ Texture* VKRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, con
             {
                 /* Convert image format (will be null if no conversion is necessary) */
                 intermediateData = ConvertImageBuffer(srcImageView, formatAttribs.format, formatAttribs.dataType, extent, LLGL_MAX_THREAD_COUNT);
-                srcRowStride = extent.width * bytesPerPixel;
+
+                srcRowStride    = textureDesc.extent.width * bytesPerPixel;
+                srcLayerStride  = textureDesc.extent.height * srcRowStride;
             }
         }
 
         if (intermediateData)
         {
-            /*
-            Validate that source image data was large enough so conversion is valid,
-            then use temporary image buffer as source for initial data
-            */
+            /* Validate that source image data was large enough so conversion is valid, then use temporary image as source for initial data */
             const std::size_t srcImageDataSize = GetMemoryFootprint(initialImage->format, initialImage->dataType, imageSize);
-            RenderSystem::AssertImageDataSize(initialImage->dataSize, srcImageDataSize);
+            LLGL_ASSERT(initialImage->dataSize >= srcImageDataSize);
             initialData = intermediateData.get();
         }
         else
         {
-            /*
-            Validate that image data is large enough,
-            then use input data as source for initial data
-            */
-            RenderSystem::AssertImageDataSize(initialImage->dataSize, initialDataSize);
+            /* Validate that image data is large enough, then use input data as source for initial data */
+            LLGL_ASSERT(initialImage->dataSize >= initialDataSize);
             initialData = initialImage->data;
         }
     }
@@ -382,7 +399,7 @@ Texture* VKRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, con
     /* Create device texture */
     VKTexture* textureVK = textures_.emplace<VKTexture>(device_, *deviceMemoryMngr_, textureDesc);
 
-    if (initialData != nullptr)
+    if (initialData != nullptr && !IsMultiSampleTexture(textureDesc.type))
     {
         /* Create staging buffer */
         VkBufferCreateInfo stagingCreateInfo;
@@ -407,7 +424,8 @@ Texture* VKRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, con
             textureVK->TransitionImageLayout(context_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, true);
 
             /* Determine row length (in pixels) for image upload with padding */
-            const std::uint32_t rowLength = (bytesPerPixel > 0 ? srcRowStride / bytesPerPixel : 0);
+            const std::uint32_t rowLength   = (bytesPerPixel > 0 ? srcRowStride / bytesPerPixel : 0);
+            const std::uint32_t imageHeight = (srcRowStride > 0 ? srcLayerStride / srcRowStride : 0);
 
             context_.CopyBufferToImage(
                 stagingBuffer.GetVkBuffer(),
@@ -416,7 +434,8 @@ Texture* VKRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, con
                 VkOffset3D{ 0, 0, 0 },
                 textureVK->GetVkExtent(),
                 subresource,
-                rowLength
+                rowLength,
+                imageHeight
             );
 
             textureVK->TransitionImageLayout(context_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);
@@ -497,21 +516,15 @@ void VKRenderSystem::WriteTexture(Texture& texture, const TextureRegion& texture
 
     if (intermediateData)
     {
-        /*
-        Validate that source image data was large enough so conversion is valid,
-        then use temporary image buffer as source for initial data
-        */
+        /* Validate that source image data was large enough so conversion is valid, then use temporary buffer as source for initial data */
         const std::size_t srcImageDataSize = GetMemoryFootprint(srcImageView.format, srcImageView.dataType, imageSize);
-        RenderSystem::AssertImageDataSize(srcImageView.dataSize, srcImageDataSize);
+        LLGL_ASSERT(srcImageView.dataSize >= srcImageDataSize);
         imageData = intermediateData.get();
     }
     else
     {
-        /*
-        Validate that image data is large enough,
-        then use input data as source for initial data
-        */
-        RenderSystem::AssertImageDataSize(srcImageView.dataSize, static_cast<std::size_t>(imageDataSize));
+        /* Validate that image data is large enough, then use input data as source for initial data */
+        LLGL_ASSERT(srcImageView.dataSize >= static_cast<std::size_t>(imageDataSize));
         imageData = srcImageView.data;
     }
 
@@ -565,8 +578,8 @@ void VKRenderSystem::ReadTexture(Texture& texture, const TextureRegion& textureR
     const FormatAttributes&     formatAttribs   = GetFormatAttribs(format);
 
     VkImage                     image           = textureVK.GetVkImage();
-    const std::uint32_t         imageSize       = extent.width * extent.height * extent.depth;
-    const VkDeviceSize          imageDataSize   = static_cast<VkDeviceSize>(GetMemoryFootprint(format, imageSize));
+    const std::size_t           imageNumTexels  = extent.width * extent.height * extent.depth;
+    const VkDeviceSize          imageDataSize   = static_cast<VkDeviceSize>(GetMemoryFootprint(format, imageNumTexels));
 
     /* Create staging buffer */
     VkBufferCreateInfo stagingCreateInfo;
@@ -601,7 +614,7 @@ void VKRenderSystem::ReadTexture(Texture& texture, const TextureRegion& textureR
         {
             /* Copy data to buffer object */
             const ImageView srcImageView{ formatAttribs.format, formatAttribs.dataType, memory, static_cast<std::size_t>(imageDataSize) };
-            RenderSystem::CopyTextureImageData(dstImageView, srcImageView, imageSize, extent.width);
+            ConvertImageBuffer(srcImageView, dstImageView, extent, LLGL_MAX_THREAD_COUNT, true);
             deviceMemory->Unmap(device_);
         }
     }
@@ -761,6 +774,8 @@ bool VKRenderSystem::GetNativeHandle(void* nativeHandle, std::size_t nativeHandl
         nativeHandleVK->instance        = instance_.Get();
         nativeHandleVK->physicalDevice  = physicalDevice_.GetVkPhysicalDevice();
         nativeHandleVK->device          = device_.GetVkDevice();
+        nativeHandleVK->queue           = device_.GetVkQueue();
+        nativeHandleVK->queueFamily     = device_.GetQueueFamilyIndices().graphicsFamily;
         return true;
     }
     return false;
@@ -802,7 +817,7 @@ void VKRenderSystem::CreateInstance(const RendererConfigurationVulkan* config)
         (
             extSupport == VKExtSupport::Required ||
             extSupport == VKExtSupport::Optional ||
-            (this->debugLayerEnabled_ && extSupport == VKExtSupport::DebugOnly)
+            (this->isDebugLayerEnabled_ && extSupport == VKExtSupport::DebugOnly)
         );
     };
 
@@ -859,7 +874,7 @@ void VKRenderSystem::CreateInstance(const RendererConfigurationVulkan* config)
     VkValidationFeaturesEXT validationFeatures = {};
 
     /* Enable GPU-assisted validation if debug layer is enabled and Vulkan 1.1 or later is supported */
-    if (debugLayerEnabled_ && instanceVersion >= VK_API_VERSION_1_1)
+    if (isDebugLayerEnabled_ && instanceVersion >= VK_API_VERSION_1_1)
     {
         validationFeatures.sType                            = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
         validationFeatures.enabledValidationFeatureCount    = LLGL_ARRAY_LENGTH(validationFeaturesEnabled);
@@ -877,14 +892,22 @@ void VKRenderSystem::CreateInstance(const RendererConfigurationVulkan* config)
 static VKAPI_ATTR VkBool32 VKAPI_CALL VKDebugCallback(
     VkDebugReportFlagsEXT       flags,
     VkDebugReportObjectTypeEXT  objectType,
-    uint64_t                    object,
-    size_t                      location,
-    int32_t                     messageCode,
+    std::uint64_t               object,
+    std::size_t                 location,
+    std::int32_t                messageCode,
     const char*                 layerPrefix,
     const char*                 message,
     void*                       userData)
 {
     DebugPuts(message);
+
+    if ((flags & VK_DEBUG_REPORT_ERROR_BIT_EXT) != 0)
+    {
+        VKRenderSystem* renderSystemVK = static_cast<VKRenderSystem*>(userData);
+        if (renderSystemVK->IsBreakOnErrorEnabled())
+            DebugBreakOnError();
+    }
+
     return VK_FALSE;
 }
 
@@ -929,7 +952,7 @@ void VKRenderSystem::CreateDebugReportCallback()
         createInfo.pNext        = nullptr;
         createInfo.flags        = flags;
         createInfo.pfnCallback  = VKDebugCallback;
-        createInfo.pUserData    = reinterpret_cast<void*>(this);
+        createInfo.pUserData    = this;
     }
     debugReportCallback_ = VKPtr<VkDebugReportCallbackEXT>{ instance_, DestroyDebugReportCallbackEXT };
     auto result = CreateDebugReportCallbackEXT(instance_, &createInfo, nullptr, debugReportCallback_.ReleaseAndGetAddressOf());
@@ -979,7 +1002,7 @@ bool VKRenderSystem::IsLayerRequired(const char* name, const RendererConfigurati
         }
     }
 
-    if (debugLayerEnabled_)
+    if (isDebugLayerEnabled_)
     {
         if (::strcmp(name, VK_LAYER_KHRONOS_VALIDATION_NAME) == 0)
             return true;

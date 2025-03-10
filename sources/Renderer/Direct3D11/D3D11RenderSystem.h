@@ -115,8 +115,9 @@ class D3D11RenderSystem final : public RenderSystem
 
         void CreateFactory();
         void QueryVideoAdapters(long flags, ComPtr<IDXGIAdapter>& outPreferredAdatper);
-        HRESULT CreateDevice(IDXGIAdapter* adapter, bool debugDevice = false);
-        HRESULT CreateDeviceWithFlags(IDXGIAdapter* adapter, const ArrayView<D3D_FEATURE_LEVEL>& featureLevels, UINT flags);
+        HRESULT CreateDevice(IDXGIAdapter* adapter, bool isDebugDevice = false, bool isSoftwareDevice = false);
+        HRESULT CreateDeviceWithFlags(IDXGIAdapter* adapter, const ArrayView<D3D_FEATURE_LEVEL>& featureLevels, bool isSoftwareDevice = false, UINT flags = 0);
+        HRESULT CreateDeviceWithFlagsAndDriverType(IDXGIAdapter* adapter, D3D_DRIVER_TYPE driverType, const ArrayView<D3D_FEATURE_LEVEL>& featureLevels, UINT flags);
         HRESULT QueryDXInterfacesFromNativeHandle(const Direct3D11::RenderSystemNativeHandle& nativeHandle);
         void QueryDXDeviceVersion();
         void CreateStateManagerAndCommandQueue();

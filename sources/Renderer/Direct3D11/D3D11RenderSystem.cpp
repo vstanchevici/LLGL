@@ -5,6 +5,7 @@
  * Licensed under the terms of the BSD 3-Clause license (see LICENSE.txt).
  */
 
+#include <initguid.h> // Comes first to define GUIDs
 #include "D3D11RenderSystem.h"
 #include "D3D11Types.h"
 #include "D3D11ResourceFlags.h"
@@ -19,6 +20,7 @@
 #include "../../Core/StringUtils.h"
 #include "../../Core/Assertion.h"
 #include "../../Platform/Module.h"
+#include "D3D11ObjectUtils.h"
 #include <limits.h>
 
 #include "Command/D3D11PrimaryCommandBuffer.h"
@@ -46,7 +48,8 @@ namespace LLGL
 
 D3D11RenderSystem::D3D11RenderSystem(const RenderSystemDescriptor& renderSystemDesc)
 {
-    const bool debugDevice = ((renderSystemDesc.flags & RenderSystemFlags::DebugDevice) != 0);
+    const bool isDebugDevice    = ((renderSystemDesc.flags & RenderSystemFlags::DebugDevice   ) != 0);
+    const bool isSoftwareDevice = ((renderSystemDesc.flags & RenderSystemFlags::SoftwareDevice) != 0);
 
     if (auto* customNativeHandle = GetRendererNativeHandle<Direct3D11::RenderSystemNativeHandle>(renderSystemDesc))
     {
@@ -62,12 +65,13 @@ D3D11RenderSystem::D3D11RenderSystem(const RenderSystemDescriptor& renderSystemD
         ComPtr<IDXGIAdapter> preferredAdatper;
         QueryVideoAdapters(renderSystemDesc.flags, preferredAdatper);
 
-        HRESULT hr = CreateDevice(preferredAdatper.Get(), debugDevice);
+        HRESULT hr = CreateDevice(preferredAdatper.Get(), isDebugDevice, isSoftwareDevice);
         DXThrowIfFailed(hr, "failed to create D3D11 device");
+        QueryDXDeviceVersion();
     }
 
     #if LLGL_DEBUG
-    if (debugDevice)
+    if (isDebugDevice)
         liveObjectReporter_ = std::unique_ptr<LiveObjectReporter>(new LiveObjectReporter());
     #endif
 
@@ -195,7 +199,7 @@ void D3D11RenderSystem::Release(BufferArray& bufferArray)
 void D3D11RenderSystem::WriteBuffer(Buffer& buffer, std::uint64_t offset, const void* data, std::uint64_t dataSize)
 {
     auto& bufferD3D = LLGL_CAST(D3D11Buffer&, buffer);
-    bufferD3D.WriteSubresource(context_.Get(), data, static_cast<UINT>(dataSize), static_cast<UINT>(offset));
+    bufferD3D.WriteSubresource(context_.Get(), data, static_cast<UINT>(dataSize), static_cast<UINT>(offset), stateMngr_->NeedsCommandListEmulation());
 }
 
 void D3D11RenderSystem::ReadBuffer(Buffer& buffer, std::uint64_t offset, void* data, std::uint64_t dataSize)
@@ -230,7 +234,8 @@ Texture* D3D11RenderSystem::CreateTexture(const TextureDescriptor& textureDesc, 
     auto* textureD3D = textures_.emplace<D3D11Texture>(device_.Get(), textureDesc);
 
     /* Initialize texture data with or without initial image data */
-    InitializeGpuTexture(*textureD3D, textureDesc, initialImage);
+    if (!IsMultiSampleTexture(textureDesc.type))
+        InitializeGpuTexture(*textureD3D, textureDesc, initialImage);
 
     /* Generate MIP-maps if enabled */
     if (initialImage != nullptr && MustGenerateMipsOnCreate(textureDesc))
@@ -343,11 +348,18 @@ void D3D11RenderSystem::ReadTexture(Texture& texture, const TextureRegion& textu
 
         D3D11_MAPPED_SUBRESOURCE mappedSubresource;
         HRESULT hr = context_->Map(texCopy.Get(), subresource, D3D11_MAP_READ, 0, &mappedSubresource);
-        DXThrowIfFailed(hr, "failed to map D3D11 texture copy resource");
+        D3D11ThrowIfFailed(hr, "failed to map D3D11 texture copy resource", textureD3D.GetNative());
 
         /* Copy host visible resource to CPU accessible resource */
-        const ImageView intermediateSrcView{ formatAttribs.format, formatAttribs.dataType, mappedSubresource.pData, mappedSubresource.DepthPitch };
-        const std::size_t bytesWritten = RenderSystem::CopyTextureImageData(intermediateDstView, intermediateSrcView, numTexelsPerLayer, extent.width, mappedSubresource.RowPitch);
+        const ImageView intermediateSrcView
+        {
+            formatAttribs.format,
+            formatAttribs.dataType,
+            mappedSubresource.pData,
+            mappedSubresource.DepthPitch * extent.depth,
+            mappedSubresource.RowPitch
+        };
+        const std::size_t bytesWritten = ConvertImageBuffer(intermediateSrcView, intermediateDstView, extent, LLGL_MAX_THREAD_COUNT, true);
 
         /* Unmap resource */
         context_->Unmap(texCopy.Get(), subresource);
@@ -641,7 +653,7 @@ void D3D11RenderSystem::QueryVideoAdapters(long flags, ComPtr<IDXGIAdapter>& out
     videoAdatperInfo_ = DXGetVideoAdapterInfo(factory_.Get(), flags, outPreferredAdatper.ReleaseAndGetAddressOf());
 }
 
-HRESULT D3D11RenderSystem::CreateDevice(IDXGIAdapter* adapter, bool debugDevice)
+HRESULT D3D11RenderSystem::CreateDevice(IDXGIAdapter* adapter, bool isDebugDevice, bool isSoftwareDevice)
 {
     /* Find list of feature levels to select from, and statically determine maximal feature level */
     const D3D_FEATURE_LEVEL featureLevels[] =
@@ -657,60 +669,68 @@ HRESULT D3D11RenderSystem::CreateDevice(IDXGIAdapter* adapter, bool debugDevice)
         D3D_FEATURE_LEVEL_9_1,
     };
 
-    HRESULT hr = 0;
+    HRESULT hr = S_OK;
 
-    if (debugDevice)
+    if (isDebugDevice)
     {
         /* Try to create device with debug layer (only supported if Windows 8.1 SDK is installed) */
-        hr = CreateDeviceWithFlags(adapter, featureLevels, D3D11_CREATE_DEVICE_DEBUG);
-        if (FAILED(hr))
-            hr = CreateDeviceWithFlags(adapter, featureLevels, 0);
-    }
-    else
-    {
-        /* Create device without debug layer */
-        hr = CreateDeviceWithFlags(adapter, featureLevels, 0);
+        hr = CreateDeviceWithFlags(adapter, featureLevels, isSoftwareDevice, D3D11_CREATE_DEVICE_DEBUG);
+        if (SUCCEEDED(hr))
+            return hr;
     }
 
+    /* Create device without debug layer */
+    hr = CreateDeviceWithFlags(adapter, featureLevels, isSoftwareDevice);
+    if (SUCCEEDED(hr))
+        return hr;
+
     /* Try to create device with default adapter if preferred one failed */
-    if (FAILED(hr) && adapter != nullptr)
+    if (adapter != nullptr)
     {
         /* Update video adapter info with default adapter */
         videoAdatperInfo_ = DXGetVideoAdapterInfo(factory_.Get());
-        hr = CreateDeviceWithFlags(nullptr, featureLevels, 0);
-    }
-
-    if (FAILED(hr))
-        return hr;
-
-    QueryDXDeviceVersion();
-
-    return S_OK;
-}
-
-HRESULT D3D11RenderSystem::CreateDeviceWithFlags(IDXGIAdapter* adapter, const ArrayView<D3D_FEATURE_LEVEL>& featureLevels, UINT flags)
-{
-    HRESULT hr = S_OK;
-
-    for (D3D_DRIVER_TYPE driver : { D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP, D3D_DRIVER_TYPE_SOFTWARE })
-    {
-        hr = D3D11CreateDevice(
-            adapter,                                    // Video adapter
-            driver,                                     // Driver type
-            0,                                          // Software rasterizer module (none)
-            flags,                                      // Flags
-            featureLevels.data(),                       // Feature level
-            static_cast<UINT>(featureLevels.size()),    // Num feature levels
-            D3D11_SDK_VERSION,                          // SDK version
-            device_.ReleaseAndGetAddressOf(),           // Output device
-            &featureLevel_,                             // Output feature level
-            context_.ReleaseAndGetAddressOf()           // Output device context
-        );
+        hr = CreateDeviceWithFlags(nullptr, featureLevels, isSoftwareDevice);
         if (SUCCEEDED(hr))
-            break;
+            return hr;
+
+        if (isSoftwareDevice)
+            hr = CreateDeviceWithFlags(nullptr, featureLevels);
     }
 
     return hr;
+}
+
+HRESULT D3D11RenderSystem::CreateDeviceWithFlags(IDXGIAdapter* adapter, const ArrayView<D3D_FEATURE_LEVEL>& featureLevels, bool isSoftwareDevice, UINT flags)
+{
+    if (isSoftwareDevice)
+    {
+        /* If a software device is explicitly requested, don't attempt to create other devices */
+        HRESULT hr = CreateDeviceWithFlagsAndDriverType(adapter, D3D_DRIVER_TYPE_REFERENCE, featureLevels, flags);
+        if (FAILED(hr))
+            return CreateDeviceWithFlagsAndDriverType(adapter, D3D_DRIVER_TYPE_WARP, featureLevels, flags);
+        return hr;
+    }
+    else
+    {
+        /* Create hardware accelerated device */
+        return CreateDeviceWithFlagsAndDriverType(adapter, D3D_DRIVER_TYPE_HARDWARE, featureLevels, flags);
+    }
+}
+
+HRESULT D3D11RenderSystem::CreateDeviceWithFlagsAndDriverType(IDXGIAdapter* adapter, D3D_DRIVER_TYPE driverType, const ArrayView<D3D_FEATURE_LEVEL>& featureLevels, UINT flags)
+{
+    return D3D11CreateDevice(
+        adapter,                                    // Video adapter
+        driverType,                                 // Driver type
+        0,                                          // Software rasterizer module (none)
+        flags,                                      // Flags
+        featureLevels.data(),                       // Feature level
+        static_cast<UINT>(featureLevels.size()),    // Num feature levels
+        D3D11_SDK_VERSION,                          // SDK version
+        device_.ReleaseAndGetAddressOf(),           // Output device
+        &featureLevel_,                             // Output feature level
+        context_.ReleaseAndGetAddressOf()           // Output device context
+    );
 }
 
 HRESULT D3D11RenderSystem::QueryDXInterfacesFromNativeHandle(const Direct3D11::RenderSystemNativeHandle& nativeHandle)
@@ -882,6 +902,13 @@ static std::uint32_t GetMaxRenderTargets(D3D_FEATURE_LEVEL featureLevel)
     else                                        return 1;
 }
 
+static long GetStorageResourceStageFlags(D3D_FEATURE_LEVEL featureLevel)
+{
+    if (featureLevel >= D3D_FEATURE_LEVEL_11_1) return StageFlags::AllStages; // UAVs not supported in non-pixel/compute stages before feature level 11.1
+    if (featureLevel >= D3D_FEATURE_LEVEL_11_0) return StageFlags::FragmentStage | StageFlags::ComputeStage;
+    else                                        return 0;
+}
+
 // see https://msdn.microsoft.com/en-us/library/windows/desktop/ff476876(v=vs.85).aspx
 void D3D11RenderSystem::QueryRenderingCaps(RenderingCapabilities& caps)
 {
@@ -907,7 +934,7 @@ void D3D11RenderSystem::QueryRenderingCaps(RenderingCapabilities& caps)
     caps.features.hasTextureViewSwizzle             = false; // not supported by D3D11
     caps.features.hasBufferViews                    = true;
     caps.features.hasConstantBuffers                = true;
-    caps.features.hasStorageBuffers                 = true;
+    caps.features.hasStorageBuffers                 = (featureLevel >= D3D_FEATURE_LEVEL_11_0);
     caps.features.hasGeometryShaders                = (featureLevel >= D3D_FEATURE_LEVEL_10_0);
     caps.features.hasTessellationShaders            = (featureLevel >= D3D_FEATURE_LEVEL_11_0);
     caps.features.hasTessellatorStage               = (featureLevel >= D3D_FEATURE_LEVEL_11_0);
@@ -953,6 +980,7 @@ void D3D11RenderSystem::QueryRenderingCaps(RenderingCapabilities& caps)
     caps.limits.maxDepthBufferSamples               = FindSuitableSampleDesc(device_.Get(), DXGI_FORMAT_D32_FLOAT).Count;
     caps.limits.maxStencilBufferSamples             = FindSuitableSampleDesc(device_.Get(), DXGI_FORMAT_D32_FLOAT_S8X24_UINT).Count;
     caps.limits.maxNoAttachmentSamples              = D3D11_MAX_MULTISAMPLE_SAMPLE_COUNT;
+    caps.limits.storageResourceStageFlags           = GetStorageResourceStageFlags(featureLevel);
 }
 
 int D3D11RenderSystem::GetMinorVersion() const
@@ -1176,8 +1204,10 @@ D3D11RenderSystem::LiveObjectReporter::LiveObjectReporter() :
 
 D3D11RenderSystem::LiveObjectReporter::~LiveObjectReporter()
 {
+    #if !LLGL_UNITY_BUILD
     if (debugDevice)
         debugDevice->ReportLiveObjects(DXGI_DEBUG_D3D11, DXGI_DEBUG_RLO_ALL);
+    #endif
 }
 
 #endif // /LLGL_DEBUG

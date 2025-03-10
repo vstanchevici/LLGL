@@ -92,14 +92,15 @@ void GLDeferredCommandBuffer::UpdateBuffer(
     Buffer&         dstBuffer,
     std::uint64_t   dstOffset,
     const void*     data,
-    std::uint16_t   dataSize)
+    std::uint64_t   dataSize)
 {
-    auto cmd = AllocCommand<GLCmdBufferSubData>(GLOpcodeBufferSubData, dataSize);
+    const std::size_t dataSizeSz = static_cast<std::size_t>(dataSize);
+    auto cmd = AllocCommand<GLCmdBufferSubData>(GLOpcodeBufferSubData, dataSizeSz);
     {
         cmd->buffer = LLGL_CAST(GLBuffer*, &dstBuffer);
         cmd->offset = static_cast<GLintptr>(dstOffset);
         cmd->size   = static_cast<GLsizeiptr>(dataSize);
-        ::memcpy(cmd + 1, data, dataSize);
+        ::memcpy(cmd + 1, data, dataSizeSz);
     }
 }
 
@@ -1231,6 +1232,9 @@ TCommand* GLDeferredCommandBuffer::AllocCommand(const GLOpcode opcode, std::size
 {
     return buffer_.AllocCommand<TCommand>(opcode, payloadSize);
 }
+
+
+#undef LLGL_FLUSH_MEMORY_BARRIERS
 
 
 } // /namespace LLGL

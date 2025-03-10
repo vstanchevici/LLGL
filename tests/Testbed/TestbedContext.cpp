@@ -101,6 +101,8 @@ TestbedContext::TestbedContext(const char* moduleName, int version, int argc, ch
     // Check for debug options
     const char* debugValue              = "";
     const bool  isDebugMode             = (HasProgramArgument(argc, argv, "-d", &debugValue) || HasProgramArgument(argc, argv, "--debug", &debugValue));
+    const bool  isBreakOnError          = (HasProgramArgument(argc, argv, "-b") || HasProgramArgument(argc, argv, "--break"));
+    const bool  isRefMode               = HasProgramArgument(argc, argv, "--ref");
     const bool  isCpuAndGpuDebugMode    = (*debugValue == '\0' || ::strcmp(debugValue, "gpu+cpu") == 0 || ::strcmp(debugValue, "cpu+gpu") == 0);
     const bool  isCpuDebugMode          = (isCpuAndGpuDebugMode || ::strcmp(debugValue, "cpu") == 0);
     const bool  isGpuDebugMode          = (isCpuAndGpuDebugMode || ::strcmp(debugValue, "gpu") == 0);
@@ -118,10 +120,13 @@ TestbedContext::TestbedContext(const char* moduleName, int version, int argc, ch
         if (isDebugMode)
         {
             if (isGpuDebugMode)
-                rendererDesc.flags = RenderSystemFlags::DebugDevice;
+                rendererDesc.flags |= RenderSystemFlags::DebugDevice;
             if (isCpuDebugMode)
                 rendererDesc.debugger = &debugger;
         }
+
+        if (isRefMode)
+            rendererDesc.flags |= RenderSystemFlags::SoftwareDevice;
 
         if (preferAMD)
             rendererDesc.flags |= RenderSystemFlags::PreferAMD;
@@ -129,6 +134,9 @@ TestbedContext::TestbedContext(const char* moduleName, int version, int argc, ch
             rendererDesc.flags |= RenderSystemFlags::PreferIntel;
         if (preferNVIDIA)
             rendererDesc.flags |= RenderSystemFlags::PreferNVIDIA;
+
+        if (isBreakOnError)
+            rendererDesc.flags |= RenderSystemFlags::DebugBreakOnError;
 
         if (::strcmp(moduleName, "OpenGL") == 0)
         {
@@ -138,7 +146,9 @@ TestbedContext::TestbedContext(const char* moduleName, int version, int argc, ch
             rendererDesc.rendererConfigSize = sizeof(cfgGL);
         }
     }
-    if ((renderer = RenderSystem::Load(rendererDesc)) != nullptr)
+
+    Report report;
+    if ((renderer = RenderSystem::Load(rendererDesc, &report)) != nullptr)
     {
         // Create swap chain
         SwapChainDescriptor swapChainDesc;
@@ -176,6 +186,11 @@ TestbedContext::TestbedContext(const char* moduleName, int version, int argc, ch
             ++failures;
         CreateSamplerStates();
         LoadDefaultProjectionMatrix();
+    }
+    else
+    {
+        // Log error report
+        Log::Errorf(Log::ColorFlags::StdError, "%s", report.GetText());
     }
 }
 
@@ -344,6 +359,7 @@ unsigned TestbedContext::RunAllTests()
     RUN_TEST( CommandBufferSecondary      );
     RUN_TEST( TriangleStripCutOff         );
     RUN_TEST( TextureViews                );
+    RUN_TEST( TextureStrides              );
     RUN_TEST( Uniforms                    );
     RUN_TEST( ShadowMapping               );
     RUN_TEST( ViewportAndScissor          );
@@ -354,7 +370,7 @@ unsigned TestbedContext::RunAllTests()
     RUN_TEST( CombinedTexSamplers         );
 
     // Reset main renderer and run C99 tests
-    // LLGL can't run the same render system in multiple instances (confuses the context managemenr in GL backend)
+    // LLGL can't run the same render system in multiple instances (confuses the context management in GL backend)
     renderer.reset();
     RUN_C99_TEST( OffscreenC99 );
 
@@ -911,9 +927,12 @@ bool TestbedContext::LoadShaders()
         shaders[PSShadowedScene]    = LoadShaderFromFile("ShadowMapping.hlsl",         ShaderType::Fragment,        "PScene",  "ps_5_0");
         shaders[VSResourceArrays]   = LoadShaderFromFile("ResourceArrays.hlsl",        ShaderType::Vertex,          "VSMain",  "vs_5_0");
         shaders[PSResourceArrays]   = LoadShaderFromFile("ResourceArrays.hlsl",        ShaderType::Fragment,        "PSMain",  "ps_5_0");
-        shaders[VSResourceBinding]  = LoadShaderFromFile("ResourceBinding.hlsl",       ShaderType::Vertex,          "VSMain",  "vs_5_0", nullptr, VertFmtEmpty);
-        shaders[PSResourceBinding]  = LoadShaderFromFile("ResourceBinding.hlsl",       ShaderType::Fragment,        "PSMain",  "ps_5_0");
-        shaders[CSResourceBinding]  = LoadShaderFromFile("ResourceBinding.hlsl",       ShaderType::Compute,         "CSMain",  "cs_5_0");
+        if ((caps.limits.storageResourceStageFlags & StageFlags::VertexStage) != 0)
+        {
+            shaders[VSResourceBinding]  = LoadShaderFromFile("ResourceBinding.hlsl",   ShaderType::Vertex,          "VSMain",  "vs_5_0", nullptr, VertFmtEmpty);
+            shaders[PSResourceBinding]  = LoadShaderFromFile("ResourceBinding.hlsl",   ShaderType::Fragment,        "PSMain",  "ps_5_0");
+            shaders[CSResourceBinding]  = LoadShaderFromFile("ResourceBinding.hlsl",   ShaderType::Compute,         "CSMain",  "cs_5_0");
+        }
         shaders[VSClear]            = LoadShaderFromFile("ClearScreen.hlsl",           ShaderType::Vertex,          "VSMain",  "vs_5_0", nullptr, VertFmtEmpty);
         shaders[PSClear]            = LoadShaderFromFile("ClearScreen.hlsl",           ShaderType::Fragment,        "PSMain",  "ps_5_0");
         shaders[VSStreamOutput]     = LoadShaderFromFile("StreamOutput.hlsl",          ShaderType::Vertex,          "VSMain",  "vs_5_0", nullptr, VertFmtColored, VertFmtColoredSO);
@@ -1050,14 +1069,10 @@ void TestbedContext::CreatePipelineLayouts()
 
     layouts[PipelineTextured] = renderer->CreatePipelineLayout(
         Parse(
-            HasCombinedSamplers()
-                ?   "cbuffer(Scene@1):vert:frag,"
-                    "texture(colorMap@2):frag,"
-                    "sampler(2):frag,"
-                :
-                    "cbuffer(Scene@1):vert:frag,"
-                    "texture(colorMap@2):frag,"
-                    "sampler(linearSampler@3):frag,"
+            "cbuffer(Scene@1):vert:frag,"
+            "texture(colorMap@2):frag,"
+            "sampler(linearSampler@3):frag,"
+            "sampler<colorMap, linearSampler>(colorMap@2),"
         )
     );
 }

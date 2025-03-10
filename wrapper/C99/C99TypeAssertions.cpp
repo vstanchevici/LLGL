@@ -980,12 +980,15 @@ LLGL_STATIC_ASSERT_OFFSET(RenderingLimits, maxColorBufferSamples);
 LLGL_STATIC_ASSERT_OFFSET(RenderingLimits, maxDepthBufferSamples);
 LLGL_STATIC_ASSERT_OFFSET(RenderingLimits, maxStencilBufferSamples);
 LLGL_STATIC_ASSERT_OFFSET(RenderingLimits, maxNoAttachmentSamples);
+LLGL_STATIC_ASSERT_OFFSET(RenderingLimits, storageResourceStageFlags);
 
 LLGL_STATIC_ASSERT_SIZE(ImageView);
 LLGL_STATIC_ASSERT_OFFSET(ImageView, format);
 LLGL_STATIC_ASSERT_OFFSET(ImageView, dataType);
 LLGL_STATIC_ASSERT_OFFSET(ImageView, data);
 LLGL_STATIC_ASSERT_OFFSET(ImageView, dataSize);
+LLGL_STATIC_ASSERT_OFFSET(ImageView, rowStride);
+LLGL_STATIC_ASSERT_OFFSET(ImageView, layerStride);
 
 LLGL_STATIC_ASSERT_SIZE(MutableImageView);
 LLGL_STATIC_ASSERT_OFFSET(MutableImageView, format);
@@ -1138,12 +1141,6 @@ LLGL_STATIC_ASSERT_OFFSET(ProfileCommandBufferRecord, querySections);
 LLGL_STATIC_ASSERT_OFFSET(ProfileCommandBufferRecord, renderConditionSections);
 LLGL_STATIC_ASSERT_OFFSET(ProfileCommandBufferRecord, drawCommands);
 LLGL_STATIC_ASSERT_OFFSET(ProfileCommandBufferRecord, dispatchCommands);
-
-LLGL_STATIC_ASSERT_SIZE(ProfileTimeRecord);
-LLGL_STATIC_ASSERT_OFFSET(ProfileTimeRecord, annotation);
-LLGL_STATIC_ASSERT_OFFSET(ProfileTimeRecord, cpuTicksStart);
-LLGL_STATIC_ASSERT_OFFSET(ProfileTimeRecord, cpuTicksEnd);
-LLGL_STATIC_ASSERT_OFFSET(ProfileTimeRecord, elapsedTime);
 
 LLGL_STATIC_ASSERT_SIZE(ColorCodes);
 LLGL_STATIC_ASSERT_OFFSET(ColorCodes, textFlags);

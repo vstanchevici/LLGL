@@ -21,13 +21,6 @@ static bool VectorsEqual(const Gs::Vector4i& lhs, const Gs::Vector4i& rhs)
     );
 }
 
-#define SAFE_RELEASE(OBJ)           \
-    if (OBJ != nullptr)             \
-    {                               \
-        renderer->Release(*OBJ);    \
-        OBJ = nullptr;              \
-    }
-
 /*
 This test is primarily aiming at the D3D11 backend to ensure the automatic unbinding of R/W resources is working correctly (see D3D11BindingTable, D3DBindingLocator).
 Bind buffer and texture resources as SRV and UAV in an alternating fashion and across both graphics and compute stages.
@@ -41,6 +34,10 @@ DEF_TEST( ResourceBinding )
         return TestResult::Skipped;
     }
     #endif
+
+    // This shader writes to a UAV in the vertex shader
+    if ((caps.limits.storageResourceStageFlags & StageFlags::VertexStage) == 0)
+        return TestResult::Skipped;
 
     enum PSOList
     {
@@ -667,6 +664,7 @@ DEF_TEST( ResourceBinding )
         if (!VectorsEqual(readbackValue, expectedResults.buffers[i]))
         {
             Log::Errorf(
+                Log::ColorFlags::StdError,
                 "Mismatch between buffer %d (Frame %u) [%d, %d, %d, %d] and expected value [%d, %d, %d, %d]\n",
                 i, frame,
                 readbackValue[0], readbackValue[1], readbackValue[2], readbackValue[3],
@@ -695,6 +693,7 @@ DEF_TEST( ResourceBinding )
         if (!VectorsEqual(readbackValue, expectedResults.textures[i]))
         {
             Log::Errorf(
+                Log::ColorFlags::StdError,
                 "Mismatch between texture %d (Frame %u) [%d, %d, %d, %d] and expected value [%d, %d, %d, %d]\n",
                 i, frame,
                 readbackValue[0], readbackValue[1], readbackValue[2], readbackValue[3],

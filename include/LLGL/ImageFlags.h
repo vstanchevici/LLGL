@@ -76,12 +76,13 @@ struct ImageView
     ImageView(const ImageView&) = default;
 
     //! Constructor to initialize all attributes.
-    inline ImageView(ImageFormat format, DataType dataType, const void* data, std::size_t dataSize, std::uint32_t rowStride = 0) :
-        format    { format    },
-        dataType  { dataType  },
-        data      { data      },
-        dataSize  { dataSize  },
-        rowStride { rowStride }
+    inline ImageView(ImageFormat format, DataType dataType, const void* data, std::size_t dataSize, std::uint32_t rowStride = 0, std::uint32_t layerStride = 0) :
+        format      { format      },
+        dataType    { dataType    },
+        data        { data        },
+        dataSize    { dataSize    },
+        rowStride   { rowStride   },
+        layerStride { layerStride }
     {
     }
 
@@ -105,11 +106,20 @@ struct ImageView
 
     /**
     \brief Specifies the stride (in bytes) between two rows of the image data.
-    \remarks If this is zero, each image layer is considerd tightly packed
+    \remarks If this is zero, each image row is considered tightly packed
     and the stride is implied by the width of the image multiplied by the pixel format size (see Format).
-    \note Only supported with: Vulkan, OpenGL.
+    \note Only supported with: Vulkan, OpenGL, Direct3D 11, Direct3D 12.
     */
     std::uint32_t   rowStride   = 0;
+
+    /**
+    \brief Specifies the stride (in bytes) between two array layers or volume slices of the image data.
+    \remarks If this is zero, each image layer is considered tightly packed
+    and the stride is implied by the row stride (implicit or explicit) times the height of the image multiplied by the pixel format size (see Format).
+    If this is non-zero, it must be a multiple of \c rowStride.
+    \note Only supported with image conversion functions.
+    */
+    std::uint32_t   layerStride = 0;
 };
 
 struct LLGL_DEPRECATED("LLGL::SrcImageDescriptor is deprecated since 0.04b; Use LLGL::ImageView instead!", "ImageView") SrcImageDescriptor
@@ -201,58 +211,74 @@ struct LLGL_DEPRECATED("LLGL::DstImageDescriptor is deprecated since 0.04b; Use 
 
 /**
 \brief Converts the image format and data type of the source image (only uncompressed color formats).
+
 \param[in] srcImageView Specifies the source image view.
 \param[out] dstImageView Specifies the destination image view.
 \param[in] extent Specifies the extent of the image. This is required 
 \param[in] threadCount Specifies the number of threads to use for conversion.
 If this is less than 2, no multi-threading is used. If this is equal to \c LLGL_MAX_THREAD_COUNT,
-the maximal count of threads the system supports will be used (e.g. 4 on a quad-core processor). By default 0.
-\return True if any conversion was necessary. Otherwise, no conversion was necessary and the destination buffer is not modified!
+the number of threads will be determined by the workload and the available CPU cores the system supports (e.g. 4 on a quad-core processor).
+Note that this does not guarantee the maximum number of threads the system supports if the workload does not demand it. By default 0.
+\param[in] copyUnchangedImage Specifies whether to copy the source buffer into the destination buffer if no conversion was necessary. By default false.
+
+\return Number of bytes that have been written to the destination buffer.
+If this is 0, no conversion was necessary and the destination buffer is not modified.
+
 \note Compressed images and depth-stencil images cannot be converted with this function.
+
 \throw std::invalid_argument If a compressed image format is specified either as source or destination.
 \throw std::invalid_argument If a depth-stencil format is specified either as source or destination.
 \throw std::invalid_argument If the source buffer size is not a multiple of the source data type size times the image format size.
 \throw std::invalid_argument If the source buffer is a null pointer.
 \throw std::invalid_argument If the destination buffer size does not match the required output buffer size.
 \throw std::invalid_argument If the destination buffer is a null pointer.
+
 \see LLGL_MAX_THREAD_COUNT
 \see GetMemoryFootprint
 */
-LLGL_EXPORT bool ConvertImageBuffer(
+LLGL_EXPORT std::size_t ConvertImageBuffer(
     const ImageView&        srcImageView,
     const MutableImageView& dstImageView,
     const Extent3D&         extent,
-    unsigned                threadCount = 0
+    unsigned                threadCount         = 0,
+    bool                    copyUnchangedImage  = false
 );
 
 /**
 \brief Converts the image format and data type of the source image (only uncompressed color formats).
 \remarks Same as the primary version of ConvertImageBuffer where the \c extent parameter is implied as 1-dimensional size.
 This must only be used for tightly packed image buffer, i.e. with a row stride of zero.
-\see ConvertImageBuffer(const ImageView&, const MutableImageView&, const Extent3D&, unsigned)
+\see ConvertImageBuffer(const ImageView&, const MutableImageView&, const Extent3D&, unsigned, bool)
 */
-LLGL_EXPORT bool ConvertImageBuffer(
+LLGL_EXPORT std::size_t ConvertImageBuffer(
     const ImageView&        srcImageView,
     const MutableImageView& dstImageView,
-    unsigned                threadCount = 0
+    unsigned                threadCount         = 0,
+    bool                    copyUnchangedImage  = false
 );
 
 /**
 \brief Converst the image format and data type of the source image (only uncompressed color formats) and returns the new generated image buffer.
+
 \param[in] srcImageView Specifies the source image view.
 \param[in] dstFormat Specifies the destination image format.
 \param[in] dstDataType Specifies the destination image data type.
 \param[in] extent Specifies the extent of the image. This is required 
 \param[in] threadCount Specifies the number of threads to use for conversion.
 If this is less than 2, no multi-threading is used. If this is equal to \c LLGL_MAX_THREAD_COUNT,
-the maximal count of threads the system supports will be used (e.g. 4 on a quad-core processor). By default 0.
+the number of threads will be determined by the workload and the available CPU cores the system supports (e.g. 4 on a quad-core processor).
+Note that this does not guarantee the maximum number of threads the system supports if the workload does not demand it. By default 0.
+
 \return Byte buffer with the converted image data or null if no conversion is necessary.
 This can be casted to the respective target data type (e.g. <code>unsigned char</code>, <code>int</code>, <code>float</code> etc.).
+
 \note Compressed images and depth-stencil images cannot be converted.
+
 \throw std::invalid_argument If a compressed image format is specified either as source or destination.
 \throw std::invalid_argument If a depth-stencil format is specified either as source or destination.
 \throw std::invalid_argument If the source buffer size is not a multiple of the source data type size times the image format size.
 \throw std::invalid_argument If the source buffer is a null pointer.
+
 \see LLGL_MAX_THREAD_COUNT
 \see GetMemoryFootprint
 */
@@ -291,7 +317,8 @@ LLGL_EXPORT DynamicByteArray DecompressImageBufferToRGBA8UNorm(
 \param[in] extent Specifies the image extent. This is required as most compression formats work in block sizes.
 \param[in] threadCount Specifies the number of threads to use for decompression.
 If this is less than 2, no multi-threading is used. If this is equal to \c LLGL_MAX_THREAD_COUNT,
-the maximal count of threads the system supports will be used (e.g. 4 on a quad-core processor). By default 0.
+the number of threads will be determined by the workload and the available CPU cores the system supports (e.g. 4 on a quad-core processor).
+Note that this does not guarantee the maximum number of threads the system supports if the workload does not demand it. By default 0.
 \return Byte buffer with the decompressed image data or null if the compression format is not supported for decompression.
 */
 LLGL_EXPORT DynamicByteArray DecompressImageBufferToRGBA8UNorm(

@@ -60,15 +60,16 @@ void NullCommandBuffer::UpdateBuffer(
     Buffer&         dstBuffer,
     std::uint64_t   dstOffset,
     const void*     data,
-    std::uint16_t   dataSize)
+    std::uint64_t   dataSize)
 {
     auto dstBufferNull = LLGL_CAST(NullBuffer*, &dstBuffer);
-    auto cmd = AllocCommand<NullCmdBufferWrite>(NullOpcodeBufferWrite, dataSize);
+    const std::size_t dataSizeSz = static_cast<std::size_t>(dataSize);
+    auto cmd = AllocCommand<NullCmdBufferWrite>(NullOpcodeBufferWrite, dataSizeSz);
     {
         cmd->buffer = dstBufferNull;
         cmd->offset = static_cast<std::size_t>(dstOffset);
-        cmd->size   = dataSize;
-        ::memcpy(cmd + 1, data, dataSize);
+        cmd->size   = dataSizeSz;
+        ::memcpy(cmd + 1, data, dataSizeSz);
     }
 }
 

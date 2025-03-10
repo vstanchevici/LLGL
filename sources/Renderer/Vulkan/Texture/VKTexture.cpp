@@ -238,7 +238,7 @@ void VKTexture::CreateImageView(
     VkImageSubresourceRange subresourceRange;
     {
         subresourceRange.aspectMask     = VKImageUtils::GetExclusiveVkImageAspect(viewVkFormat); //TODO: allow stencil-component to be selected
-        subresourceRange.baseMipLevel   = textureViewDesc.subresource.baseMipLevel,
+        subresourceRange.baseMipLevel   = textureViewDesc.subresource.baseMipLevel;
         subresourceRange.levelCount     = textureViewDesc.subresource.numMipLevels;
         subresourceRange.baseArrayLayer = textureViewDesc.subresource.baseArrayLayer;
         subresourceRange.layerCount     = textureViewDesc.subresource.numArrayLayers;
@@ -430,11 +430,11 @@ static VkSampleCountFlagBits GetVkImageSampleCountFlags(const TextureDescriptor&
 
 static VkImageUsageFlags GetVkImageUsageFlags(const TextureDescriptor& desc)
 {
-    VkImageUsageFlags usageFlags = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    VkImageUsageFlags usageFlags = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
     /* Enable TRANSFER_SRC_BIT image usage when MIP-maps are enabled, CPU read access or copy source binding is requested */
-    if (IsMipMappedTexture(desc) || (desc.cpuAccessFlags & CPUAccessFlags::Read) || (desc.bindFlags & BindFlags::CopySrc) != 0)
-        usageFlags |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+//  if (IsMipMappedTexture(desc) || (desc.cpuAccessFlags & CPUAccessFlags::Read) || (desc.bindFlags & BindFlags::CopySrc) != 0)
+//      usageFlags |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
     /* Enable either color or depth-stencil ATTACHMENT_BIT image usage when attachment usage is enabled */
     if ((desc.bindFlags & BindFlags::ColorAttachment) != 0)

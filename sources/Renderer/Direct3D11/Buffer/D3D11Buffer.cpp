@@ -84,7 +84,7 @@ BufferDescriptor D3D11Buffer::GetDesc() const
     return bufferDesc;
 }
 
-void D3D11Buffer::WriteSubresource(ID3D11DeviceContext* context, const void* data, UINT dataSize, UINT offset)
+void D3D11Buffer::WriteSubresource(ID3D11DeviceContext* context, const void* data, UINT dataSize, UINT offset, bool needsCommandListEmulation)
 {
     /* Validate parameters */
     LLGL_ASSERT_RANGE(dataSize + offset, GetSize());
@@ -127,7 +127,31 @@ void D3D11Buffer::WriteSubresource(ID3D11DeviceContext* context, const void* dat
         {
             /* Update subresource region of buffer */
             const D3D11_BOX dstBox{ offset, 0, 0, offset + dataSize, 1, 1 };
-            context->UpdateSubresource(GetNative(), 0, &dstBox, data, 0, 0);
+            if (offset != 0 && context->GetType() == D3D11_DEVICE_CONTEXT_DEFERRED)
+            {
+                #if LLGL_D3D11_ENABLE_FEATURELEVEL >= 1
+                ComPtr<ID3D11DeviceContext1> context1;
+                if (SUCCEEDED(context->QueryInterface(IID_PPV_ARGS(&context1))))
+                {
+                    /* Update buffer with UpdateSubresource1() which fixes the issue described below */
+                    context1->UpdateSubresource1(GetNative(), 0, &dstBox, data, 0, 0, 0);
+                }
+                else
+                #endif
+                if (needsCommandListEmulation)
+                {
+                    /*
+                    Update subresource region of buffer with adjusted source pointer to workaround limitation of emulated command lists.
+                    See https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-updatesubresource#calling-updatesubresource-on-a-deferred-context
+                    */
+                    const char* dataWithOffset = static_cast<const char*>(data) - offset;
+                    context->UpdateSubresource(GetNative(), 0, &dstBox, dataWithOffset, 0, 0);
+                }
+                else
+                    context->UpdateSubresource(GetNative(), 0, &dstBox, data, 0, 0);
+            }
+            else
+                context->UpdateSubresource(GetNative(), 0, &dstBox, data, 0, 0);
         }
     }
 }
@@ -242,6 +266,15 @@ static UINT GetD3DBufferSize(const BufferDescriptor& desc)
         return size;
 }
 
+static UINT GetD3DBufferStride(const BufferDescriptor& desc)
+{
+    if (!desc.vertexAttribs.empty())
+        return desc.vertexAttribs.front().stride;
+    if (desc.stride > 0)
+        return desc.stride;
+    return (GetFormatAttribs(desc.format).bitSize / 8);
+}
+
 void D3D11Buffer::CreateGpuBuffer(ID3D11Device* device, const BufferDescriptor& desc, const void* initialData)
 {
     /* Initialize native buffer descriptor */
@@ -276,7 +309,7 @@ void D3D11Buffer::CreateGpuBuffer(ID3D11Device* device, const BufferDescriptor& 
 
     /* Store buffer creation attributes */
     size_   = descD3D.ByteWidth;
-    stride_ = (desc.vertexAttribs.empty() ? 0 : desc.vertexAttribs.front().stride);
+    stride_ = GetD3DBufferStride(desc);
     format_ = DXTypes::ToDXGIFormat(desc.format);
     usage_  = descD3D.Usage;
 }

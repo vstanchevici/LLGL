@@ -14,6 +14,7 @@
 #include "../TextureUtils.h"
 #include "../../Core/CoreUtils.h"
 #include "../../Core/Exception.h"
+#include "Platform/Apple/CAMetalLayerBridge.h"
 #include <LLGL/Platform/NativeHandle.h>
 #include <LLGL/Utils/ForRange.h>
 #include <limits.h>
@@ -78,7 +79,7 @@ VKSwapChain::VKSwapChain(
                                NullVkFence(device_),
                                NullVkFence(device_)            }
 {
-    SetOrCreateSurface(surface, SwapChain::BuildDefaultSurfaceTitle(rendererInfo), desc.resolution, desc.fullscreen);
+    SetOrCreateSurface(surface, SwapChain::BuildDefaultSurfaceTitle(rendererInfo), desc);
 
     CreatePresentSemaphoresAndFences();
     CreateGpuSurface();
@@ -392,6 +393,18 @@ void VKSwapChain::CreateGpuSurface()
     }
     VkResult result = vkCreateAndroidSurfaceKHR(instance_, &createInfo, nullptr, surface_.ReleaseAndGetAddressOf());
     VKThrowIfFailed(result, "failed to create Android surface for Vulkan swap-chain");
+
+    #elif defined LLGL_OS_MACOS || defined LLGL_OS_IOS
+
+    VkMetalSurfaceCreateInfoEXT createInfo;
+    {
+        createInfo.sType    = VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT;
+        createInfo.pNext    = nullptr;
+        createInfo.flags    = 0;
+        createInfo.pLayer   = CreateCAMetalLayerForSurfaceHandle(&nativeHandle, sizeof(nativeHandle));
+    }
+    VkResult result = vkCreateMetalSurfaceEXT(instance_, &createInfo, nullptr, surface_.ReleaseAndGetAddressOf());
+    VKThrowIfFailed(result, "failed to create Macos surface for Vulkan swap-chain");
 
     #else
 
