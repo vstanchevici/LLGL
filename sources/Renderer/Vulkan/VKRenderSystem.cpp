@@ -821,15 +821,20 @@ void VKRenderSystem::CreateInstance(const RendererConfigurationVulkan* config)
         );
     };
 
+    /* Setup Vulkan instance descriptor */
+    VkInstanceCreateInfo instanceInfo = {};
+
     for (const VkExtensionProperties& prop : extensionProperties)
     {
         const VKExtSupport extSupport = GetVulkanInstanceExtensionSupport(prop.extensionName);
         if (IsVKExtSupportIncluded(extSupport))
             extensionNames.push_back(prop.extensionName);
-    }
 
-    /* Setup Vulkan instance descriptor */
-    VkInstanceCreateInfo instanceInfo = {};
+        #if VK_KHR_portability_enumeration
+        if (::strcmp(prop.extensionName, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) == 0)
+            instanceInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+        #endif
+    }
 
     instanceInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 

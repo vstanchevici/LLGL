@@ -9,7 +9,20 @@
 
 cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 
-project(LLGL)
+if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.16")
+    # For CMake 3.16+ specify languages at top-level project to enable unity build option.
+    # This is required for unity builds only so that the correct compiler will be selected
+    # for the respective batches of mixed language source files.
+    if(APPLE)
+        project(LLGL LANGUAGES C CXX OBJC OBJCXX)
+    elseif(WIN32)
+        project(LLGL LANGUAGES C CXX CSharp)
+    else()
+        project(LLGL LANGUAGES C CXX)
+    endif()
+else()
+    project(LLGL)
+endif()
 
 
 # === Target platforms ===
@@ -289,16 +302,7 @@ function(find_project_source_files OUTPUT_LIST SRC_FILES)
     set(${OUTPUT_LIST} ${OutputProjectFiles} PARENT_SCOPE)
 endfunction()
 
-function(set_llgl_module_properties MODULE_NAME)
-    set_target_properties(
-        ${MODULE_NAME} PROPERTIES
-            LINKER_LANGUAGE             CXX
-            DEBUG_POSTFIX               "D"
-            FOLDER                      "LLGL"
-            ARCHIVE_OUTPUT_DIRECTORY    "${LLGL_OUTPUT_DIR}"
-            LIBRARY_OUTPUT_DIRECTORY    "${LLGL_OUTPUT_DIR}"
-            RUNTIME_OUTPUT_DIRECTORY    "${LLGL_OUTPUT_DIR}"
-    )
+function(set_llgl_unity_build_mode MODULE_NAME)
     if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.16")
         if(LLGL_UNITY_BUILD)
             set_target_properties(
@@ -309,6 +313,19 @@ function(set_llgl_module_properties MODULE_NAME)
             )
         endif()
     endif()
+endfunction()
+
+function(set_llgl_module_properties MODULE_NAME)
+    set_target_properties(
+        ${MODULE_NAME} PROPERTIES
+            LINKER_LANGUAGE             CXX
+            DEBUG_POSTFIX               "D"
+            FOLDER                      "LLGL"
+            ARCHIVE_OUTPUT_DIRECTORY    "${LLGL_OUTPUT_DIR}"
+            LIBRARY_OUTPUT_DIRECTORY    "${LLGL_OUTPUT_DIR}"
+            RUNTIME_OUTPUT_DIRECTORY    "${LLGL_OUTPUT_DIR}"
+    )
+    set_llgl_unity_build_mode(${MODULE_NAME})
 endfunction()
 
 function(append_global_property PROP_NAME OUTPUT_LIST NEW_ITEM)
@@ -434,6 +451,12 @@ function(add_llgl_example_project PROJECT_NAME LINKER_LANG SRC_FILES LIB_FILES)
             DEBUG_POSTFIX               "D"
             RUNTIME_OUTPUT_DIRECTORY    "${LLGL_OUTPUT_DIR}"
     )
+
+    # Enable unity build for examples that contain at least 4 source files
+    list(LENGTH SRC_FILES SourceFileCount)
+    if(${SourceFileCount} GREATER_EQUAL 4)
+        set_llgl_unity_build_mode(${PROJECT_NAME})
+    endif()
 
     # Configure linker settings
     if(LLGL_ANDROID_PLATFORM)
