@@ -39,7 +39,8 @@ VKTexture::VKTexture(
     image_         { device                            },
     imageView_     { device, vkDestroyImageView        },
     format_        { VKTypes::Map(desc.format)         },
-    swizzleFormat_ { MapToVKSwizzleFormat(desc.format) }
+    swizzleFormat_ { MapToVKSwizzleFormat(desc.format) },
+    deviceMemoryMngr_{ deviceMemoryMngr                }
 {
     /* Create Vulkan image and allocate memory region */
     CreateImage(device, desc);
@@ -63,6 +64,24 @@ bool VKTexture::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize
         return true;
     }
     return false;
+}
+
+void VKTexture::SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
+{
+    auto* nativeHandleVK = GetTypedNativeHandle<Vulkan::ResourceNativeHandle>(nativeHandle, nativeHandleSize);
+
+    //image_.ReleaseMemoryRegion(deviceMemoryMngr_);
+
+    image_.SetVkImage(nativeHandleVK->image.image);
+    image_.SetVkImageLayout(nativeHandleVK->image.imageLayout);
+    SetVkFormat(nativeHandleVK->image.format);
+    SetVkExtent(nativeHandleVK->image.extent);
+    SetNumMipLevels(nativeHandleVK->image.numMipLevels);
+    SetNumArrayLayers(nativeHandleVK->image.numArrayLayers);
+    SetSampleCountBits(nativeHandleVK->image.sampleCountBits);
+    SetUsageFlags(nativeHandleVK->image.imageUsageFlags);
+
+    //image_.AllocateMemoryRegion(deviceMemoryMngr_);
 }
 
 Extent3D VKTexture::GetMipExtent(std::uint32_t mipLevel) const

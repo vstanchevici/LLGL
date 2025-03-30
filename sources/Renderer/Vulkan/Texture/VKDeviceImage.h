@@ -82,10 +82,23 @@ class VKDeviceImage
             return image_;
         }
 
+        // Set the native VkImage handle.
+        inline void SetVkImage(VkImage image)
+        {
+            //ReleaseVkImage();
+            image_ = image;
+        }
+
         // Returns the native VkImageLayout state of this image.
         inline VkImageLayout GetVkImageLayout() const
         {
             return layout_;
+        }
+
+        // Set the native VkImageLayout state of this image.
+        inline void SetVkImageLayout(VkImageLayout layout)
+        {
+            layout_ = layout;
         }
 
         // Returns the region of the hardware device memory.
@@ -94,10 +107,22 @@ class VKDeviceImage
             return memoryRegion_;
         }
 
+        // Set the region of the hardware device memory.
+        inline void SetMemoryRegion(VKDeviceMemoryRegion* memoryRegion)
+        {
+            memoryRegion_ = memoryRegion;
+        }
+
         // Returns the Vulkan memory requirements for this device image.
         inline const VkMemoryRequirements& GetMemoryRequirements() const
         {
             return memoryRequirements_;
+        }
+
+        // Set the Vulkan memory requirements for this device image.
+        inline void SetMemoryRequirements(const VkMemoryRequirements& memoryRequirements)
+        {
+            memoryRequirements_ = memoryRequirements;
         }
 
     private:

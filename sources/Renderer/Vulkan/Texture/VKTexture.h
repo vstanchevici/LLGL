@@ -89,10 +89,22 @@ class VKTexture final : public Texture
             return image_.GetVkImage();
         }
 
+        // Set the Vulkan image object.
+        inline void SetVkImage(VkImage image)
+        {
+            image_.SetVkImage(image);
+        }
+
         // Returns the native VkImageLayout state of this image.
         inline VkImageLayout GetVkImageLayout() const
         {
             return image_.GetVkImageLayout();
+        }
+
+        // Returns the native VkImageLayout state of this image.
+        inline void SetVkImageLayout(VkImageLayout layout)
+        {
+            image_.SetVkImageLayout(layout);
         }
 
         // Returns the internal Vulkan image view object (created with 'CreateInternalImageView').
@@ -107,10 +119,22 @@ class VKTexture final : public Texture
             return format_;
         }
 
+        // Set the VkFormat with whereby the VkImage object was created.
+        inline void SetVkFormat(VkFormat format)
+        {
+            format_ = format;
+        }
+
         // Returns the VkExtent3D with whereby the VkImage object was created (does not include the array layer count).
         inline const VkExtent3D& GetVkExtent() const
         {
             return extent_;
+        }
+
+        // Set the VkExtent3D with whereby the VkImage object was created (does not include the array layer count).
+        inline void SetVkExtent(const VkExtent3D& extent)
+        {
+            extent_ = extent;
         }
 
         // Returns the number of MIP level with whereby the VkImage object was created.
@@ -119,10 +143,22 @@ class VKTexture final : public Texture
             return numMipLevels_;
         }
 
+        // Set the number of MIP level with whereby the VkImage object was created.
+        inline void SetNumMipLevels(std::uint32_t levels)
+        {
+            numMipLevels_ = levels;
+        }
+
         // Returns the number of array layers.
         inline std::uint32_t GetNumArrayLayers() const
         {
             return numArrayLayers_;
+        }
+
+        // Set the number of array layers.
+        inline void SetNumArrayLayers(std::uint32_t numArrayLayers)
+        {
+            numArrayLayers_ = numArrayLayers;
         }
 
         // Returns the sample count as Vulkan bit mask.
@@ -131,10 +167,22 @@ class VKTexture final : public Texture
             return sampleCountBits_;
         }
 
+        // Returns the sample count as Vulkan bit mask.
+        inline void SetSampleCountBits(VkSampleCountFlagBits sampleCountFlagBits)
+        {
+            sampleCountBits_ = sampleCountFlagBits;
+        }
+
         // Returns the native Vulkan image usage flags.
         inline VkImageUsageFlags GetUsageFlags() const
         {
             return usageFlags_;
+        }
+
+        // Set the native Vulkan image usage flags.
+        inline void SetUsageFlags(VkImageUsageFlags usageFlags)
+        {
+            usageFlags_ = usageFlags;
         }
 
         // Returns the region of the hardware device memory.
@@ -142,6 +190,8 @@ class VKTexture final : public Texture
         {
             return image_.GetMemoryRegion();
         }
+
+        void SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize) override;
 
     private:
 
@@ -160,6 +210,7 @@ class VKTexture final : public Texture
         VkImageUsageFlags       usageFlags_         = 0;
         const VKSwizzleFormat   swizzleFormat_      = VKSwizzleFormat::RGBA;
 
+        VKDeviceMemoryManager& deviceMemoryMngr_;
 };
 
 
