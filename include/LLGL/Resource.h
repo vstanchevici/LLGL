@@ -78,7 +78,7 @@ class LLGL_EXPORT Resource : public RenderSystemChild
         \see OpenGL::ResourceNativeHandle
         */
         virtual bool GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize) = 0;
-
+        virtual void SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize) {}
 };
 
 
