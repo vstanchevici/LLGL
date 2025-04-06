@@ -8,6 +8,7 @@
 #include "VKTexture.h"
 #include "VKImageUtils.h"
 #include "../Memory/VKDeviceMemory.h"
+#include "../Memory/VKDeviceMemoryManager.h"
 #include "../Command/VKCommandContext.h"
 #include "../../TextureUtils.h"
 #include "../../../Core/CoreUtils.h"
@@ -82,6 +83,8 @@ void VKTexture::SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize
     SetUsageFlags(nativeHandleVK->image.imageUsageFlags);
 
     //image_.AllocateMemoryRegion(deviceMemoryMngr_);
+
+    CreateInternalImageView(deviceMemoryMngr_.GetVkDevice());
 }
 
 Extent3D VKTexture::GetMipExtent(std::uint32_t mipLevel) const
