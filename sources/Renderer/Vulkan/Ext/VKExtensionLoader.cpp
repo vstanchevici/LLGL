@@ -133,7 +133,7 @@ static bool DECL_LOADVKEXT_PROC(KHR_get_physical_device_properties2)
 
 bool VKLoadInstanceExtensions(VkInstance instance)
 {
-    constexpr bool abortOnFailure = true;
+    constexpr bool abortOnFailure = false;
 
     auto LoadExtension = [instance, abortOnFailure](const char* extName, const LoadVKExtensionInstanceProc& extLoadingProc) -> void
     {
