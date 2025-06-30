@@ -59,6 +59,9 @@ class GLRenderTarget final : public RenderTarget
             return framebuffer_;
         }
 
+        bool GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize) override final;
+        bool SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize) override final;
+
     private:
 
         struct GLFramebufferAttachment

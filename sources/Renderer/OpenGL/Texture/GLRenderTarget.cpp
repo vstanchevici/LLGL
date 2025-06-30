@@ -19,6 +19,8 @@
 #include <LLGL/Utils/ForRange.h>
 #include <algorithm>
 
+#include <LLGL/Backend/OpenGL/NativeHandle.h>
+
 
 namespace LLGL
 {
@@ -246,7 +248,7 @@ void GLRenderTarget::CreateFramebufferWithNoAttachments()
     {
         /* Bind primary FBO and create dummy renderbuffer attachment */
         GLStateManager::Get().BindFramebuffer(GLFramebufferTarget::DrawFramebuffer, framebuffer_.GetID());
-        CreateAndAttachRenderbuffer(GL_COLOR_ATTACHMENT0, GL_RED);
+        CreateAndAttachRenderbuffer(GL_COLOR_ATTACHMENT0, GL_RGBA8);
     }
 
     /* Validate framebuffer status */
@@ -362,6 +364,74 @@ GLenum GLRenderTarget::AllocDepthStencilAttachmentBinding(const Format format)
     return binding;
 }
 
+bool GLRenderTarget::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
+{
+    if (nativeHandle != nullptr && nativeHandleSize == sizeof(OpenGL::RenderTargetNativeHandle))
+    {
+        auto* nativeHandleGL = static_cast<OpenGL::RenderTargetNativeHandle*>(nativeHandle);
+        nativeHandleGL->resolution[0] = resolution_[0];
+        nativeHandleGL->resolution[1] = resolution_[1];
+
+        nativeHandleGL->frameBuffer.id = framebuffer_.GetID();
+        nativeHandleGL->framebufferResolve.id = framebufferResolve_.GetID();
+
+        nativeHandleGL->renderbuffers.resize(renderbuffers_.size());
+        for(int i = 0; i < renderbuffers_.size(); i++){
+            nativeHandleGL->renderbuffers[i].id = renderbuffers_[i].GetID();
+        }
+
+        nativeHandleGL->samples = samples_;
+
+        return true;
+    }
+    return false;
+}
+
+bool GLRenderTarget::SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
+{
+    if (nativeHandle != nullptr && nativeHandleSize == sizeof(OpenGL::RenderTargetNativeHandle))
+    {
+        auto* nativeHandleGL = static_cast<OpenGL::RenderTargetNativeHandle*>(nativeHandle);
+
+        if(nativeHandleGL->resolution[0] > 0)
+            resolution_[0] = nativeHandleGL->resolution[0];
+        if(nativeHandleGL->resolution[1] > 0) 
+            resolution_[1] = nativeHandleGL->resolution[1];
+
+        if(nativeHandleGL->frameBuffer.id > 0){
+            for(auto& rb : renderbuffers_){
+                rb.DeleteRenderbuffer();
+            }
+            renderbuffers_.clear();
+
+            framebuffer_.DeleteFramebuffer();
+            framebuffer_.SetID(nativeHandleGL->frameBuffer.id);
+        }
+
+        if(nativeHandleGL->framebufferResolve.id > 0){
+            framebufferResolve_.DeleteFramebuffer();
+            framebufferResolve_.SetID(nativeHandleGL->framebufferResolve.id);
+        }
+
+        if(!nativeHandleGL->renderbuffers.empty()){
+            for(auto& rb : renderbuffers_){
+                rb.DeleteRenderbuffer();
+            }
+            renderbuffers_.clear();
+
+            renderbuffers_.resize(nativeHandleGL->renderbuffers.size());
+            for(int i = 0; i < nativeHandleGL->renderbuffers.size(); i++){
+                renderbuffers_[i].SetID(nativeHandleGL->renderbuffers[i].id);
+            }
+        }
+
+        if(nativeHandleGL->samples > 0)
+            samples_ = nativeHandleGL->samples;
+
+        return true;
+    }
+    return false;
+}
 
 } // /namespace LLGL
 

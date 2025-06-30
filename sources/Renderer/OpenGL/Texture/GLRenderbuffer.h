@@ -43,6 +43,12 @@ class GLRenderbuffer
             return id_;
         }
 
+        // Set the hardware buffer ID.
+        inline void SetID(GLuint id)
+        {
+            id_ = id;
+        }
+
         // Returns true if this framebuffer object has a valid ID.
         inline bool Valid() const
         {

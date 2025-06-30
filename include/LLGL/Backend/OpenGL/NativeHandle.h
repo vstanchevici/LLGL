@@ -8,6 +8,7 @@
 #ifndef LLGL_OPENGL_NATIVE_HANDLE_H
 #define LLGL_OPENGL_NATIVE_HANDLE_H
 
+#include <vector>
 
 #include <LLGL/Platform/Platform.h>
 
@@ -158,6 +159,30 @@ struct ResourceNativeHandle
         //! Texture specific attributes.
         NativeTexture   texture;
     };
+};
+
+/**
+\brief Native handle structure for the OpenGL render target.
+\see RenderTarget::GetNativeHandle
+*/
+struct RenderTargetNativeHandle
+{
+    GLint resolution[2];
+
+    struct FrameBuffer{
+        GLuint id;
+    };
+
+    FrameBuffer frameBuffer;
+    FrameBuffer framebufferResolve;
+
+    struct Renderbuffer{
+        GLuint id;
+    };
+
+    std::vector<Renderbuffer> renderbuffers;
+
+    GLint samples;
 };
 
 

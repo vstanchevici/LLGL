@@ -87,6 +87,9 @@ class LLGL_EXPORT RenderTarget : public RenderSystemChild
         */
         virtual const RenderPass* GetRenderPass() const = 0;
 
+        virtual bool GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize){return false;};
+        virtual bool SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize){return false;};
+
     protected:
 
         /**
