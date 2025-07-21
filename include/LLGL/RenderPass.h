@@ -10,6 +10,7 @@
 
 
 #include <LLGL/RenderSystemChild.h>
+#include <cstddef>
 
 
 namespace LLGL
@@ -27,6 +28,8 @@ It is used to tell the driver the various segments of a frame and which render t
 class LLGL_EXPORT RenderPass : public RenderSystemChild
 {
     LLGL_DECLARE_INTERFACE( InterfaceID::RenderPass );
+public:
+    virtual bool GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize) { return false; }
 };
 
 

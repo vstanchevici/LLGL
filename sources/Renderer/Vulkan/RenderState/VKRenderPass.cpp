@@ -12,6 +12,7 @@
 #include "../../../Core/Assertion.h"
 #include <LLGL/Utils/ForRange.h>
 #include <limits>
+#include <LLGL/Backend/Vulkan/NativeHandle.h>
 
 
 namespace LLGL
@@ -274,6 +275,17 @@ void VKRenderPass::CreateVkRenderPassWithDescriptors(
     }
     VkResult result = vkCreateRenderPass(device, &createInfo, nullptr, renderPass_.ReleaseAndGetAddressOf());
     VKThrowIfFailed(result, "failed to create Vulkan render pass");
+}
+
+bool VKRenderPass::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
+{
+    if (nativeHandle != nullptr && nativeHandleSize == sizeof(Vulkan::RenderPassNativeHandle))
+    {
+        auto* nativeHandleVK = static_cast<Vulkan::RenderPassNativeHandle*>(nativeHandle);
+        nativeHandleVK->renderPass = renderPass_.Get();
+        return true;
+    }
+    return false;
 }
 
 

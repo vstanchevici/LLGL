@@ -60,6 +60,15 @@ struct CommandBufferNativeHandle
 };
 
 /**
+\brief Native handle structure for the Vulkan command buffer.
+\see RenderPass::GetNativeHandle
+*/
+struct RenderPassNativeHandle
+{
+    VkRenderPass renderPass;
+};
+
+/**
 \brief Native Vulkan resource type enumeration.
 \see ResourceNativeHandle::type
 */
