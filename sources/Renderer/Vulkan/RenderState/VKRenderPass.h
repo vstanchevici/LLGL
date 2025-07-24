@@ -82,7 +82,7 @@ class VKRenderPass final : public RenderPass
             return sampleCountBits_;
         }
 
-        bool VKRenderPass::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize);
+        bool GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize);
 
     private:
 
