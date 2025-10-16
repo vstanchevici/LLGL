@@ -5,6 +5,10 @@
  * Licensed under the terms of the BSD 3-Clause license (see LICENSE.txt).
  */
 
+#if _MSC_VER
+#pragma warning(disable: 4996)
+#endif
+
 #include "Testbed.h"
 #include <LLGL/Container/DynamicArray.h>
 #include <LLGL/Container/SmallVector.h>
@@ -230,6 +234,14 @@ DEF_RITEST( ContainerSmallVector )
     iv5_4a = std::move(iv5_4b);
     TEST_SMALL_VECTOR_EXT(iv5_4a, cmpInt16, 4);
     TEST_SMALL_VECTOR_EXT(iv5_4b, cmpInt0,  0);
+
+    // Test reallocations
+    SmallVector<int, 2> iv2_2;
+    iv2_2 = { 1, 2, 3 };
+    iv2_2.pop_back();
+    iv2_2.pop_back();
+    iv2_2.shrink_to_fit();
+    iv2_2.insert(iv2_2.end(), { 4, 5 });
 
     return TestResult::Passed;
 }

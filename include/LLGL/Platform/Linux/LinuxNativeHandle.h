@@ -12,28 +12,68 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
+#if LLGL_EXPOSE_WAYLAND || LLGL_LINUX_ENABLE_WAYLAND
+#include <wayland-client.h>
+#endif
+
 
 namespace LLGL
 {
 
 
+/**
+\brief Type enumeration to distinguish native handles between X11 and Wayland protocols.
+\see NativeHandle::type
+*/
+enum class NativeType
+{
+    X11,
+    Wayland
+};
+
 //! Linux native handle structure.
 struct NativeHandle
 {
-    //! X11 display connection.
-    ::Display*      display;
+    //! Specifies whether this is an X11 or Wayland native handle.
+    NativeType type;
 
-    //! X11 window object.
-    ::Window        window;
+    struct NativeHandleX11
+    {
+        //! X11 display connection.
+        ::Display*      display;
 
-    //! X11 visual information.
-    ::XVisualInfo*  visual;
+        //! X11 window object.
+        ::Window        window;
 
-    //! X11 colormap object. Used internally by the OpenGL backend.
-    ::Colormap      colorMap;
+        //! X11 visual information.
+        ::XVisualInfo*  visual;
 
-    //! X11 screen index.
-    int             screen;
+        //! X11 colormap object. Used internally by the OpenGL backend.
+        ::Colormap      colorMap;
+
+        //! X11 screen index.
+        int             screen;
+    };
+
+    struct NativeHandleWayland
+    {
+        #if LLGL_EXPOSE_WAYLAND || LLGL_LINUX_ENABLE_WAYLAND
+        struct wl_surface* window;
+        struct wl_display* display;
+        #else
+        void* window;
+        void* display;
+        #endif
+    };
+
+    union
+    {
+        //! Native handle for X11 protocol.
+        NativeHandleX11     x11;
+
+        //! Native handle for Wayland protocol.
+        NativeHandleWayland wayland;
+    };
 };
 
 

@@ -145,6 +145,7 @@ MTLPixelFormat ToMTLPixelFormat(const Format format)
         case Format::RGB10A2UInt:       return MTLPixelFormatRGB10A2Uint;
         case Format::RG11B10Float:      return MTLPixelFormatRG11B10Float;
         case Format::RGB9E5Float:       return MTLPixelFormatRGB9E5Float;
+        case Format::BGR5A1UNorm:       return MTLPixelFormatBGR5A1Unorm;
 
         /* --- Depth-stencil formats --- */
         #ifdef LLGL_OS_IOS
@@ -153,7 +154,11 @@ MTLPixelFormat ToMTLPixelFormat(const Format format)
         case Format::D16UNorm:          return MTLPixelFormatDepth16Unorm;
         #endif
         case Format::D32Float:          return MTLPixelFormatDepth32Float;
-        case Format::D24UNormS8UInt:    return MTLPixelFormatDepth32Float_Stencil8; // MTLPixelFormatDepth24Unorm_Stencil8 not supported?
+        #ifdef LLGL_OS_IOS
+        case Format::D24UNormS8UInt:    return MTLPixelFormatDepth32Float_Stencil8;
+        #else
+        case Format::D24UNormS8UInt:    return MTLPixelFormatDepth24Unorm_Stencil8;
+        #endif
         case Format::D32FloatS8X24UInt: return MTLPixelFormatDepth32Float_Stencil8;
 
         /* --- Block compression (BC) formats --- */
@@ -168,6 +173,10 @@ MTLPixelFormat ToMTLPixelFormat(const Format format)
         case Format::BC4SNorm:          return MTLPixelFormatBC4_RSnorm;
         case Format::BC5UNorm:          return MTLPixelFormatBC5_RGUnorm;
         case Format::BC5SNorm:          return MTLPixelFormatBC5_RGSnorm;
+        case Format::BC6HUFloat:        return MTLPixelFormatBC6H_RGBUfloat;
+        case Format::BC6HSFloat:        return MTLPixelFormatBC6H_RGBFloat;
+        case Format::BC7UNorm:          return MTLPixelFormatBC7_RGBAUnorm;
+        case Format::BC7UNorm_sRGB:     return MTLPixelFormatBC7_RGBAUnorm_sRGB;
         #endif
 
         /* --- Advanced scalable texture compression (ASTC) formats --- */
@@ -608,6 +617,7 @@ Format ToFormat(const MTLPixelFormat pixelFormat)
         case MTLPixelFormatRGB10A2Uint:             return Format::RGB10A2UInt;
         case MTLPixelFormatRG11B10Float:            return Format::RG11B10Float;
         case MTLPixelFormatRGB9E5Float:             return Format::RGB9E5Float;
+        case MTLPixelFormatBGR5A1Unorm:             return Format::BGR5A1UNorm;
 
         /* --- Depth-stencil formats --- */
         #ifndef LLGL_OS_IOS
@@ -631,6 +641,10 @@ Format ToFormat(const MTLPixelFormat pixelFormat)
         case MTLPixelFormatBC4_RSnorm:              return Format::BC4SNorm;
         case MTLPixelFormatBC5_RGUnorm:             return Format::BC5UNorm;
         case MTLPixelFormatBC5_RGSnorm:             return Format::BC5SNorm;
+        case MTLPixelFormatBC6H_RGBUfloat:          return Format::BC6HUFloat;
+        case MTLPixelFormatBC6H_RGBFloat:           return Format::BC6HSFloat;
+        case MTLPixelFormatBC7_RGBAUnorm:           return Format::BC7UNorm;
+        case MTLPixelFormatBC7_RGBAUnorm_sRGB:      return Format::BC7UNorm_sRGB;
         #endif // /LLGL_OS_IOS
 
         /* --- Advanced scalable texture compression (ASTC) formats --- */

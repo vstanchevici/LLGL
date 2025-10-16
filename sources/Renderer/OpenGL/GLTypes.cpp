@@ -171,11 +171,11 @@ GLenum MapOrZero(const Format format)
 
         /* --- BGRA color formats --- */
         #ifndef LLGL_WEBGL // WebGL does not support texture swizzling
-        case Format::BGRA8UNorm:        return GL_RGBA8;        // texture swizzle
-        case Format::BGRA8UNorm_sRGB:   return GL_SRGB8_ALPHA8; // texture swizzle
-        case Format::BGRA8SNorm:        return GL_RGBA8_SNORM;  // texture swizzle
-        case Format::BGRA8UInt:         return GL_RGBA8UI;      // texture swizzle
-        case Format::BGRA8SInt:         return GL_RGBA8I;       // texture swizzle
+        case Format::BGRA8UNorm:        return GL_RGBA8;        // Texture component swizzle
+        case Format::BGRA8UNorm_sRGB:   return GL_SRGB8_ALPHA8; // Texture component swizzle
+        case Format::BGRA8SNorm:        return GL_RGBA8_SNORM;  // Texture component swizzle
+        case Format::BGRA8UInt:         return GL_RGBA8UI;      // Texture component swizzle
+        case Format::BGRA8SInt:         return GL_RGBA8I;       // Texture component swizzle
         #endif
 
         #ifdef LLGL_OPENGL
@@ -184,6 +184,7 @@ GLenum MapOrZero(const Format format)
         case Format::RGB10A2UInt:       return GL_RGB10_A2UI;
         case Format::RG11B10Float:      return GL_R11F_G11F_B10F;
         case Format::RGB9E5Float:       return GL_RGB9_E5;
+        case Format::BGR5A1UNorm:       return GL_RGB5_A1;      // Texture component swizzle
         #endif
 
         /* --- Depth-stencil formats --- */
@@ -215,6 +216,13 @@ GLenum MapOrZero(const Format format)
         case Format::BC5UNorm:          return GL_COMPRESSED_RED_GREEN_RGTC2_EXT;
         case Format::BC5SNorm:          return GL_COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT;
         #endif // /GL_EXT_texture_compression_rgtc
+
+        #if GL_ARB_texture_compression_bptc
+        case Format::BC6HUFloat:        return GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_ARB;
+        case Format::BC6HSFloat:        return GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_ARB;
+        case Format::BC7UNorm:          return GL_COMPRESSED_RGBA_BPTC_UNORM_ARB;
+        case Format::BC7UNorm_sRGB:     return GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_ARB;
+        #endif // /GL_ARB_texture_compression_bptc
 
         /* --- Advanced scalable texture compression (ASTC) formats --- */
         #if GL_ES_VERSION_3_2
@@ -1114,6 +1122,7 @@ Format UnmapFormat(const GLenum internalFormat)
         case GL_RGB10_A2UI:                             return Format::RGB10A2UInt;
         case GL_R11F_G11F_B10F:                         return Format::RG11B10Float;
         case GL_RGB9_E5:                                return Format::RGB9E5Float;
+        case GL_RGB5_A1:                                return Format::BGR5A1UNorm;
         #endif
 
         /* --- Depth-stencil formats --- */
@@ -1147,6 +1156,14 @@ Format UnmapFormat(const GLenum internalFormat)
         case GL_COMPRESSED_RED_GREEN_RGTC2_EXT:         return Format::BC5UNorm;
         case GL_COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT:  return Format::BC5SNorm;
         #endif // /GL_EXT_texture_compression_rgtc
+
+
+        #if GL_ARB_texture_compression_bptc
+        case GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_ARB: return Format::BC6HUFloat;
+        case GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_ARB:   return Format::BC6HSFloat;
+        case GL_COMPRESSED_RGBA_BPTC_UNORM_ARB:         return Format::BC7UNorm;
+        case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_ARB:   return Format::BC7UNorm_sRGB;
+        #endif // /GL_ARB_texture_compression_bptc
 
         /* --- Advanced scalable texture compression (ASTC) formats --- */
         #if GL_ES_VERSION_3_2

@@ -124,7 +124,6 @@ int main()
 
         // Print renderer information
         const auto& info = renderer->GetRendererInfo();
-        const auto& caps = renderer->GetRenderingCaps();
 
         LLGL::Log::Printf("Renderer:         %s\n", info.rendererName.c_str());
         LLGL::Log::Printf("Device:           %s\n", info.deviceName.c_str());
@@ -253,7 +252,7 @@ int main()
         auto sampler = renderer->CreateSampler(samplerDesc);
 
         // Create texture
-        std::string texFilename = "../examples/Media/Textures/Logo_Vulkan.png";
+        std::string texFilename = "../examples/Shared/Assets/Textures/Logo_Vulkan.png";
         int texWidth = 0, texHeight = 0, texComponents = 0;
 
         auto imageBuffer = stbi_load(texFilename.c_str(), &texWidth, &texHeight, &texComponents, 4);

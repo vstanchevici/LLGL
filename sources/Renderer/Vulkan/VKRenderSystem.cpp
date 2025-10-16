@@ -58,13 +58,15 @@ VKRenderSystem::VKRenderSystem(const RenderSystemDescriptor& renderSystemDesc) :
     constexpr long preferredDeviceMask = (RenderSystemFlags::PreferNVIDIA | RenderSystemFlags::PreferAMD | RenderSystemFlags::PreferIntel);
     const long preferredDeviceFlags = (renderSystemDesc.flags & preferredDeviceMask);
 
+    QuerySupportedInstanceExtensions();
+
     if (auto* customNativeHandle = GetRendererNativeHandle<Vulkan::RenderSystemNativeHandle>(renderSystemDesc))
     {
         /* Store weak references to native handles */
         instance_ = VKPtr<VkInstance>{ customNativeHandle->instance };
         if (isDebugLayerEnabled_)
             CreateDebugReportCallback();
-        VKLoadInstanceExtensions(instance_);
+        VKLoadInstanceExtensions(instance_, supportedInstanceExtensions_);
         if (!PickPhysicalDevice(preferredDeviceFlags, customNativeHandle->physicalDevice))
             return;
         CreateLogicalDevice(customNativeHandle->device);
@@ -75,7 +77,7 @@ VKRenderSystem::VKRenderSystem(const RenderSystemDescriptor& renderSystemDesc) :
         CreateInstance(rendererConfigVK);
         if (isDebugLayerEnabled_)
             CreateDebugReportCallback();
-        VKLoadInstanceExtensions(instance_);
+        VKLoadInstanceExtensions(instance_, supportedInstanceExtensions_);
         if (!PickPhysicalDevice(preferredDeviceFlags))
             return;
         CreateLogicalDevice();
@@ -138,12 +140,9 @@ void VKRenderSystem::Release(CommandBuffer& commandBuffer)
 
 /* ----- Buffers ------ */
 
-static VkBufferUsageFlags GetStagingVkBufferUsageFlags(long cpuAccessFlags)
+static VkBufferUsageFlags GetStagingVkBufferUsageFlags(long /*cpuAccessFlags*/)
 {
-    if ((cpuAccessFlags & CPUAccessFlags::Write) != 0)
-        return VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    else
-        return VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    return VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 }
 
 Buffer* VKRenderSystem::CreateBuffer(const BufferDescriptor& bufferDesc, const void* initialData)
@@ -449,7 +448,9 @@ Texture* VKRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, con
                 imageHeight
             );
 
-            textureVK->TransitionImageLayout(context_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);
+            /* Prepare image layout to be in its optimal state initially */
+            if ((textureVK->GetUsageFlags() & VK_IMAGE_USAGE_SAMPLED_BIT) != 0)
+                textureVK->TransitionImageLayout(context_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, true);
 
             /* Generate MIP-maps if enabled */
             if (initialImage != nullptr && MustGenerateMipsOnCreate(textureDesc))
@@ -501,7 +502,7 @@ void VKRenderSystem::WriteTexture(Texture& texture, const TextureRegion& texture
 
     /* Determine size of image for staging buffer */
     const TextureSubresource&   subresource     = textureRegion.subresource;
-    const Offset3D              offset          = CalcTextureOffset(textureVK.GetType(), textureRegion.offset, subresource.baseArrayLayer);
+  //const Offset3D              offset          = CalcTextureOffset(textureVK.GetType(), textureRegion.offset, subresource.baseArrayLayer);
     const Extent3D              extent          = CalcTextureExtent(textureVK.GetType(), textureRegion.extent, subresource.numArrayLayers);
     const Format                format          = VKTypes::Unmap(textureVK.GetVkFormat());
 
@@ -583,12 +584,10 @@ void VKRenderSystem::ReadTexture(Texture& texture, const TextureRegion& textureR
 
     /* Determine size of image for staging buffer */
     const TextureSubresource&   subresource     = textureRegion.subresource;
-    const Offset3D              offset          = CalcTextureOffset(textureVK.GetType(), textureRegion.offset, subresource.baseArrayLayer);
+  //const Offset3D              offset          = CalcTextureOffset(textureVK.GetType(), textureRegion.offset, subresource.baseArrayLayer);
     const Extent3D              extent          = CalcTextureExtent(textureVK.GetType(), textureRegion.extent, subresource.numArrayLayers);
     const Format                format          = VKTypes::Unmap(textureVK.GetVkFormat());
     const FormatAttributes&     formatAttribs   = GetFormatAttribs(format);
-
-    VkImage                     image           = textureVK.GetVkImage();
     const std::size_t           imageNumTexels  = extent.width * extent.height * extent.depth;
     const VkDeviceSize          imageDataSize   = static_cast<VkDeviceSize>(GetMemoryFootprint(format, imageNumTexels));
 
@@ -604,7 +603,7 @@ void VKRenderSystem::ReadTexture(Texture& texture, const TextureRegion& textureR
 
         /* Use input offset and extent (instead of transient dimensions) because copy operation takes subresource parameters into account */
         context_.CopyImageToBuffer(
-            image,
+            textureVK.GetVkImage(),
             stagingBuffer.GetVkBuffer(),
             textureVK.GetVkFormat(),
             VkOffset3D{ textureRegion.offset.x, textureRegion.offset.y, textureRegion.offset.z },
@@ -743,6 +742,11 @@ PipelineState* VKRenderSystem::CreatePipelineState(const ComputePipelineDescript
     return pipelineStates_.emplace<VKComputePSO>(device_, pipelineStateDesc, pipelineCache);
 }
 
+PipelineState* VKRenderSystem::CreatePipelineState(const MeshPipelineDescriptor& /*pipelineStateDesc*/, PipelineCache* /*pipelineCache*/)
+{
+    return nullptr; // TODO
+}
+
 void VKRenderSystem::Release(PipelineState& pipelineState)
 {
     pipelineStates_.erase(&pipelineState);
@@ -801,6 +805,29 @@ bool VKRenderSystem::GetNativeHandle(void* nativeHandle, std::size_t nativeHandl
 #define VK_LAYER_KHRONOS_VALIDATION_NAME "VK_LAYER_KHRONOS_validation"
 #endif
 
+void VKRenderSystem::QuerySupportedInstanceExtensions()
+{
+    /* Query instance extension properties */
+    instanceExtensionProperties_ = VKQueryInstanceExtensionProperties();
+
+    auto IsVKExtSupportIncluded = [this](VKExtSupport extSupport)
+    {
+        return
+        (
+            extSupport == VKExtSupport::Required ||
+            extSupport == VKExtSupport::Optional ||
+            (this->isDebugLayerEnabled_ && extSupport == VKExtSupport::DebugOnly)
+        );
+    };
+
+    for (const VkExtensionProperties& prop : instanceExtensionProperties_)
+    {
+        const VKExtSupport extSupport = GetVulkanInstanceExtensionSupport(prop.extensionName);
+        if (IsVKExtSupportIncluded(extSupport))
+            supportedInstanceExtensions_.push_back(prop.extensionName);
+    }
+}
+
 void VKRenderSystem::CreateInstance(const RendererConfigurationVulkan* config)
 {
     /* Determine supported Vulkan API version */
@@ -818,34 +845,19 @@ void VKRenderSystem::CreateInstance(const RendererConfigurationVulkan* config)
             layerNames.push_back(prop.layerName);
     }
 
-    /* Query instance extension properties */
-    const std::vector<VkExtensionProperties> extensionProperties = VKQueryInstanceExtensionProperties();
-    std::vector<const char*> extensionNames;
-
-    auto IsVKExtSupportIncluded = [this](VKExtSupport extSupport)
-    {
-        return
-        (
-            extSupport == VKExtSupport::Required ||
-            extSupport == VKExtSupport::Optional ||
-            (this->isDebugLayerEnabled_ && extSupport == VKExtSupport::DebugOnly)
-        );
-    };
-
     /* Setup Vulkan instance descriptor */
     VkInstanceCreateInfo instanceInfo = {};
 
-    for (const VkExtensionProperties& prop : extensionProperties)
+    #if VK_KHR_portability_enumeration
+    for (const char* extensionName : supportedInstanceExtensions_)
     {
-        const VKExtSupport extSupport = GetVulkanInstanceExtensionSupport(prop.extensionName);
-        if (IsVKExtSupportIncluded(extSupport))
-            extensionNames.push_back(prop.extensionName);
-
-        #if VK_KHR_portability_enumeration
-        if (::strcmp(prop.extensionName, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) == 0)
+        if (::strcmp(extensionName, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) == 0)
+        {
             instanceInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
-        #endif
+            break;
+        }
     }
+    #endif
 
     instanceInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 
@@ -872,14 +884,15 @@ void VKRenderSystem::CreateInstance(const RendererConfigurationVulkan* config)
     }
 
     /* Specify extensions to enable */
-    if (!extensionNames.empty())
+    if (!supportedInstanceExtensions_.empty())
     {
-        instanceInfo.enabledExtensionCount      = static_cast<std::uint32_t>(extensionNames.size());
-        instanceInfo.ppEnabledExtensionNames    = extensionNames.data();
+        instanceInfo.enabledExtensionCount      = static_cast<std::uint32_t>(supportedInstanceExtensions_.size());
+        instanceInfo.ppEnabledExtensionNames    = supportedInstanceExtensions_.data();
     }
 
-    #ifdef VK_EXT_validation_features
+    #if VK_EXT_validation_features
 
+    #if LLGL_VK_ENABLE_GPU_ASSISTED_VALIDATION
     const VkValidationFeatureEnableEXT validationFeaturesEnabled[] =
     {
         VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
@@ -897,6 +910,7 @@ void VKRenderSystem::CreateInstance(const RendererConfigurationVulkan* config)
         validationFeatures.pEnabledValidationFeatures       = validationFeaturesEnabled;
         instanceInfo.pNext = &validationFeatures;
     }
+    #endif
 
     #endif // /VK_EXT_validation_features
 
@@ -983,7 +997,7 @@ bool VKRenderSystem::PickPhysicalDevice(long preferredDeviceFlags, VkPhysicalDev
         /* Load weak reference to custom native physical device */
         physicalDevice_.LoadPhysicalDeviceWeakRef(customPhysicalDevice);
     }
-    else if (!physicalDevice_.PickPhysicalDevice(instance_, preferredDeviceFlags))
+    else if (!physicalDevice_.PickPhysicalDevice(instance_, supportedInstanceExtensions_, preferredDeviceFlags))
     {
         GetMutableReport().Errorf("failed to find suitable Vulkan device");
         return false;
@@ -1071,7 +1085,6 @@ VKDeviceBuffer VKRenderSystem::CreateTextureStagingBufferAndInitialize(
         {
             const std::uint32_t dstRowStride    = extent.width * bpp;
             const std::uint32_t dstLayerStride  = extent.height * dstRowStride;
-            const std::uint64_t dstSize         = extent.depth * dstLayerStride;
 
             const std::uint32_t srcLayerStride  = extent.height * srcRowStride;
 

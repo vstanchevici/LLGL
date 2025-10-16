@@ -15,6 +15,8 @@ if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.16")
     # for the respective batches of mixed language source files.
     if(APPLE)
         project(LLGL LANGUAGES C CXX OBJC OBJCXX)
+    elseif(MSVC)
+        project(LLGL LANGUAGES C CXX CSharp)
     else()
         project(LLGL LANGUAGES C CXX)
     endif()
@@ -179,16 +181,24 @@ if(WIN32)
     option(LLGL_BUILD_RENDERER_DIRECT3D12 "Include Direct3D12 renderer project" ON)
 endif()
 
+if(UNIX AND NOT APPLE)
+    option(LLGL_LINUX_ENABLE_WAYLAND "Enable support for Wayland protocol" OFF)
+endif()
+
 if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.16")
     option(LLGL_UNITY_BUILD "Build LLGL modules as unity builds in batches. This can speedup compilation time." OFF)
 endif()
 
 option(LLGL_BUILD_WRAPPER_C99 "Include wrapper for C99" OFF)
 option(LLGL_BUILD_WRAPPER_CSHARP "Include wrapper for C# (requires LLGL_BUILD_WRAPPER_C99)" OFF)
+option(LLGL_BUILD_WRAPPER_GO "Include wrapper for Go (requires LLGL_BUILD_WRAPPER_C99)" OFF)
 
 if(NOT LLGL_BUILD_WRAPPER_C99)
     if(LLGL_BUILD_WRAPPER_CSHARP)
         message(SEND_ERROR "LLGL_BUILD_WRAPPER_CSHARP is enabled but not LLGL_BUILD_WRAPPER_C99; The C# wrapper depends on the C99 wrapper!")
+    endif()
+    if(LLGL_BUILD_WRAPPER_GO)
+        message(SEND_ERROR "LLGL_BUILD_WRAPPER_GO is enabled but not LLGL_BUILD_WRAPPER_C99; The Go wrapper depends on the C99 wrapper!")
     endif()
 endif()
 
@@ -220,10 +230,10 @@ function(find_source_files OUTPUT_LIST FILTERS)
             list(APPEND FilteredProjectDirs "${ProjectSubdir}/${Filter}")
         endforeach()
     endforeach()
-    
+
     # Find all source files
     file(GLOB FilteredProjectFiles ${FilteredProjectDirs})
-    
+
     # Write filtered files to output variable
     set(${OUTPUT_LIST} ${${OUTPUT_LIST}} ${FilteredProjectFiles} PARENT_SCOPE)
 endfunction()
@@ -244,7 +254,7 @@ function(add_project_resource_files OUTPUT_LIST SRC_FOLDER)
             list(APPEND ResourceFiles "${SharedResourceFiles}" "${ProjectResourceFiles}")
         endif()
     endforeach()
-    
+
     # Write expanded resource filenames to output variable
     set(${OUTPUT_LIST} ${${OUTPUT_LIST}} ${ResourceFiles} PARENT_SCOPE)
 endfunction()
@@ -265,9 +275,9 @@ function(bundle_project_files OUTPUT_LIST SRC_FILES)
 endfunction()
 
 # Main function to find and bundle project source files.
-# @param SRC_FILES: can either be a directory or a list of specific source files if it sends with ".cpp", ".c", ".h", ".m", or ".mm".
+# @param SRC_FILES: can either be a directory or a list of specific source files if it ends with ".cpp", ".c", ".h", ".m", or ".mm".
 function(find_project_source_files OUTPUT_LIST SRC_FILES)
-    if("${SRC_FILES}" MATCHES ".+\\.(cpp|c|h|m|mm|cs)")
+    if("${SRC_FILES}" MATCHES ".+\\.(cpp|c|h|m|mm|cs)$")
         set(ProjectFiles "${SRC_FILES}")
     else()
         # Find all source files for project
@@ -277,7 +287,7 @@ function(find_project_source_files OUTPUT_LIST SRC_FILES)
             find_source_files(ProjectFiles CXX ${SRC_FILES})
         endif()
     endif()
-    
+
     # Bundle source files and write to output variable
     bundle_project_files(OutputProjectFiles "${ProjectFiles}")
 
@@ -345,13 +355,13 @@ function(add_llgl_module MODULE_NAME DEFINE_NAME SRC_FILES)
     else()
         add_library(${MODULE_NAME} SHARED ${SRC_FILES})
     endif()
-    
+
     # Keep track of all active module names
     append_global_property(LLGL_GLOBAL_MODULE_LIST None ${MODULE_NAME})
-    
+
     # Add basic link libraries and properties
     set_llgl_module_properties(${MODULE_NAME})
-    
+
     ADD_PROJECT_DEFINE(LLGL ${DEFINE_NAME})
 endfunction()
 
@@ -448,6 +458,7 @@ function(add_llgl_example_project PROJECT_NAME LINKER_LANG SRC_FILES LIB_FILES)
         ${PROJECT_NAME} PROPERTIES
             DEBUG_POSTFIX               "D"
             RUNTIME_OUTPUT_DIRECTORY    "${LLGL_OUTPUT_DIR}"
+            BUILD_RPATH                 "\$ORIGIN"
     )
 
     # Enable unity build for examples that contain at least 4 source files
@@ -465,7 +476,7 @@ function(add_llgl_example_project PROJECT_NAME LINKER_LANG SRC_FILES LIB_FILES)
     else()
         set_target_properties(${PROJECT_NAME} PROPERTIES LINKER_LANGUAGE ${LINKER_LANG})
     endif()
-    
+
     # Configure working directory and project solution folder
     if(${PROJECT_NAME} MATCHES "Example_C99_+")
         string(SUBSTRING ${PROJECT_NAME} 12 -1 PROJECT_BASE_NAME)
@@ -545,6 +556,11 @@ endif()
 
 if(LLGL_UNITY_BUILD)
     ADD_DEFINE(LLGL_UNITY_BUILD)
+endif()
+
+if(LLGL_LINUX_ENABLE_WAYLAND)
+    ADD_DEFINE(LLGL_LINUX_ENABLE_WAYLAND)
+    set(SUMMARY_FLAGS ${SUMMARY_FLAGS} "Wayland")
 endif()
 
 if(LLGL_WASM_PLATFORM)
@@ -635,7 +651,11 @@ else()
             find_source_files(FilesPlatform         CXX     "${PROJECT_SOURCE_DIR}/sources/Platform/Android")
             find_source_files(FilesIncludePlatform  CXX     "${PROJECT_INCLUDE_DIR}/LLGL/Platform/Android")
         else()
-            find_source_files(FilesPlatform         CXX     "${PROJECT_SOURCE_DIR}/sources/Platform/Linux" "${PlatformPosixDir}")
+            if(LLGL_LINUX_ENABLE_WAYLAND)
+                find_source_files(FilesPlatform     CXX     "${PROJECT_SOURCE_DIR}/sources/Platform/Linux" "${PROJECT_SOURCE_DIR}/sources/Platform/Linux/X11" "${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland" "${PlatformPosixDir}")
+            else()
+                find_source_files(FilesPlatform     CXX     "${PROJECT_SOURCE_DIR}/sources/Platform/Linux" "${PROJECT_SOURCE_DIR}/sources/Platform/Linux/X11" "${PlatformPosixDir}")
+            endif()
             find_source_files(FilesIncludePlatform  CXX     "${PROJECT_INCLUDE_DIR}/LLGL/Platform/Linux")
         endif()
     endif()
@@ -676,7 +696,6 @@ endif()
 if(LLGL_ANDROID_PLATFORM)
     source_group("native_app_glue" FILES ${FilesAndroidNativeAppGlue})
 endif()
-
 
 # === Include directories ===
 
@@ -736,6 +755,72 @@ if(LLGL_BUILD_STATIC_LIB)
 else()
     set(SUMMARY_LIBRARY_TYPE "Shared")
     add_library(LLGL SHARED ${FilesLLGL})
+    set_target_properties(LLGL PROPERTIES BUILD_RPATH "\$ORIGIN")
+endif()
+
+# Generate Wayland protocols
+if(LLGL_LINUX_ENABLE_WAYLAND)
+    find_program(WAYLAND_SCANNER_EXECUTABLE NAMES wayland-scanner)
+    if (NOT WAYLAND_SCANNER_EXECUTABLE)
+        message(FATAL_ERROR "Failed to find wayland-scanner")
+    endif()
+
+    file(MAKE_DIRECTORY ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols)
+
+    # xdg-shell.xml
+    add_custom_command(
+        COMMAND ${WAYLAND_SCANNER_EXECUTABLE} private-code < /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml > xdg-shell-protocol.c
+        OUTPUT ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols/xdg-shell-protocol.c
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols
+        VERBATIM
+    )
+
+    add_custom_command(
+        COMMAND ${WAYLAND_SCANNER_EXECUTABLE} client-header < /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml > xdg-shell-client-protocol.h
+        OUTPUT ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols/xdg-shell-client-protocol.h
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols
+        VERBATIM
+    )
+
+    # xdg-decoration-unstable-v1.xml
+    add_custom_command(
+        COMMAND ${WAYLAND_SCANNER_EXECUTABLE} client-header < /usr/share/wayland-protocols/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml > xdg-decoration-client-protocol.h
+        OUTPUT ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols/xdg-decoration-client-protocol.h
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols
+        VERBATIM
+    )
+
+    add_custom_command(
+        COMMAND ${WAYLAND_SCANNER_EXECUTABLE} private-code < /usr/share/wayland-protocols/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml > xdg-decoration-protocol.c
+        OUTPUT ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols/xdg-decoration-protocol.c
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols
+        VERBATIM
+    )
+
+    # viewporter.xml
+    add_custom_command(
+        COMMAND ${WAYLAND_SCANNER_EXECUTABLE} client-header < /usr/share/wayland-protocols/stable/viewporter/viewporter.xml > viewporter-client-protocol.h
+        OUTPUT ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols/viewporter-client-protocol.h
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols
+        VERBATIM
+    )
+
+    add_custom_command(
+        COMMAND ${WAYLAND_SCANNER_EXECUTABLE} private-code < /usr/share/wayland-protocols/stable/viewporter/viewporter.xml > viewporter-protocol.c
+        OUTPUT ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols/viewporter-protocol.c
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols
+        VERBATIM
+    )
+
+    target_sources(
+        LLGL
+        PRIVATE ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols/xdg-shell-client-protocol.h
+                ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols/xdg-shell-protocol.c
+                ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols/xdg-decoration-client-protocol.h
+                ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols/xdg-decoration-protocol.c
+                ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols/viewporter-client-protocol.h
+                ${PROJECT_SOURCE_DIR}/sources/Platform/Linux/Wayland/protocols/viewporter-protocol.c
+    )
 endif()
 
 include(GNUInstallDirs)
@@ -759,6 +844,16 @@ elseif(EMSCRIPTEN)
     target_link_libraries(LLGL embind)
 elseif(UNIX)
     target_link_libraries(LLGL X11 pthread Xrandr)
+    if(LLGL_LINUX_ENABLE_WAYLAND)
+        find_library(LIBDECOR_LIBRARY NAMES libdecor-0.so)
+        find_path(LIBDECOR_INCLUDE_DIR NAMES libdecor-0)
+
+        if (NOT LIBDECOR_LIBRARY OR NOT LIBDECOR_INCLUDE_DIR)
+            message(FATAL_ERROR "libdecor not found. Please install it.")
+        endif()
+
+        target_link_libraries(LLGL wayland-client xkbcommon ${LIBDECOR_LIBRARY})
+    endif()
 #elseif(LLGL_UWP_PLATFORM)
 #    set_target_properties(LLGL PROPERTIES VS_WINRT_REFERENCES "Windows.Foundation.UniversalApiContract")
 endif()
@@ -829,6 +924,11 @@ if(LLGL_BUILD_WRAPPER_CSHARP)
     add_subdirectory(wrapper/CSharp)
 endif()
 
+# Wrapper: Go
+if(LLGL_BUILD_WRAPPER_GO)
+    configure_file("wrapper/Go/LLGL.pc.in" "${LLGL_OUTPUT_DIR}/LLGL.pc" @ONLY)
+endif()
+
 # Install targets, headers, and CMake config files
 get_property(LLGL_ALL_TARGETS GLOBAL PROPERTY LLGL_GLOBAL_MODULE_LIST)
 if(LLGL_BUILD_RENDERER_DIRECT3D11 OR LLGL_BUILD_RENDERER_DIRECT3D12)
@@ -891,6 +991,10 @@ endif()
 
 if(LLGL_BUILD_WRAPPER_CSHARP)
     message(STATUS "Build Wrapper: C#")
+endif()
+
+if(LLGL_BUILD_WRAPPER_GO)
+    message(STATUS "Bulid Wrapper: Go")
 endif()
 
 if(LLGL_BUILD_EXAMPLES)

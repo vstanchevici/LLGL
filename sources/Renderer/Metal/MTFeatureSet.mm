@@ -21,23 +21,26 @@ namespace LLGL
 // Converts the specified Metal feature set into a fixed version number
 static int FeatureSetToVersion(MTLFeatureSet fset)
 {
-    #if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_11
-    if (fset >= MTLFeatureSet_macOS_GPUFamily1_v1)
-        return 101; // 1.1
+    #if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_14
+    if (fset >= MTLFeatureSet_macOS_GPUFamily2_v1)
+        return 201; // 2.1
+    if (fset >= MTLFeatureSet_macOS_GPUFamily1_v4)
+        return 104; // 1.4
     #endif
-    #if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_12
-    if (fset >= MTLFeatureSet_macOS_GPUFamily1_v2)
-        return 102; // 1.2
-    #endif
+
     #if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_13
     if (fset >= MTLFeatureSet_macOS_GPUFamily1_v3)
         return 103; // 1.3
     #endif
-    #if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_14
-    if (fset >= MTLFeatureSet_macOS_GPUFamily1_v4)
-        return 104; // 1.4
-    if (fset >= MTLFeatureSet_macOS_GPUFamily2_v1)
-        return 201; // 2.1
+
+    #if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_12
+    if (fset >= MTLFeatureSet_macOS_GPUFamily1_v2)
+        return 102; // 1.2
+    #endif
+
+    #if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_11
+    if (fset >= MTLFeatureSet_macOS_GPUFamily1_v1)
+        return 101; // 1.1
     #endif
     return 100; // 1.0
 }
@@ -57,7 +60,7 @@ static std::vector<Format> GetDefaultSupportedMTTextureFormats()
         Format::RGBA16UNorm,        Format::RGBA16SNorm,        Format::RGBA16UInt,         Format::RGBA16SInt,         Format::RGBA16Float,
         Format::RGBA32UInt,         Format::RGBA32SInt,         Format::RGBA32Float,
         Format::BGRA8UNorm,         Format::BGRA8UNorm_sRGB,
-        Format::RGB10A2UNorm,       Format::RGB10A2UInt,        Format::RG11B10Float,       Format::RGB9E5Float,
+        Format::RGB10A2UNorm,       Format::RGB10A2UInt,        Format::RG11B10Float,       Format::RGB9E5Float,        Format::BGR5A1UNorm,
 
         Format::D16UNorm,           Format::D24UNormS8UInt,     Format::D32Float,           Format::D32FloatS8X24UInt,
 
@@ -67,6 +70,8 @@ static std::vector<Format> GetDefaultSupportedMTTextureFormats()
         Format::BC3UNorm,           Format::BC3UNorm_sRGB,
         Format::BC4UNorm,           Format::BC4SNorm,
         Format::BC5UNorm,           Format::BC5SNorm,
+        Format::BC6HUFloat,         Format::BC6HSFloat,
+        Format::BC7UNorm,           Format::BC7UNorm_sRGB,
         #endif
 
         Format::ASTC4x4,            Format::ASTC4x4_sRGB,

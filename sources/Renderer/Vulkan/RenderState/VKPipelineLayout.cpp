@@ -87,6 +87,8 @@ std::uint32_t VKPipelineLayout::GetNumUniforms() const
     return static_cast<std::uint32_t>(uniformDescs_.size());
 }
 
+#if LLGL_VK_ENABLE_SPIRV_REFLECT
+
 // Builds one push-constant range for each uniform but with convoluted stage flags.
 static void BuildPushConstantRanges(
     const ArrayView<Shader*>&           shaders,
@@ -168,8 +170,6 @@ static void BuildPushConstantRanges(
         }
     );
 }
-
-#if LLGL_VK_ENABLE_SPIRV_REFLECT
 
 // Returns true if any of the specified shaders has at least one texel buffer,
 // i.e. of type VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER or VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER.
@@ -407,6 +407,47 @@ void VKPipelineLayout::CreateDescriptorSetLayout(
 
     outDescriptorSetLayout.Initialize(device, std::move(setLayoutBindings));
     outDescriptorSetLayout.GetLayoutBindings(outBindings);
+
+    /* Allocate slots for automatic */
+    AllocateDescriptorBarriers(outBindings);
+}
+
+void VKPipelineLayout::AllocateDescriptorBarriers(std::vector<VKLayoutBinding>& bindings)
+{
+    if ((barrierFlags_ & (BarrierFlags::StorageBuffer | BarrierFlags::StorageTexture)) != 0)
+    {
+        barrier_ = MakeUnique<VKPipelineBarrier>();
+
+        for (VKLayoutBinding& binding : bindings)
+        {
+            /* Allocate barrier slots for RW buffers */
+            if ((barrierFlags_ & BarrierFlags::StorageBuffer) != 0)
+            {
+                switch (binding.descriptorType)
+                {
+                    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+                    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+                        binding.barrierSlot = barrier_->AllocateBufferBarrier(binding.stageFlags);
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            /* Allocate barrier slots for RW textures */
+            if ((barrierFlags_ & BarrierFlags::StorageTexture) != 0)
+            {
+                switch (binding.descriptorType)
+                {
+                    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+                        binding.barrierSlot = barrier_->AllocateImageBarrier(binding.stageFlags);
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+    }
 }
 
 static void ConvertImmutableSamplerDesc(VkDescriptorSetLayoutBinding& dst, const StaticSamplerDescriptor& src, const VkSampler* immutableSamplerVK)

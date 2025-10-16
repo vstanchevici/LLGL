@@ -32,6 +32,7 @@
 
 #include "RenderState/D3D12GraphicsPSO.h"
 #include "RenderState/D3D12ComputePSO.h"
+#include "RenderState/D3D12MeshPSO.h"
 
 #include <LLGL/Backend/Direct3D12/NativeHandle.h>
 
@@ -65,7 +66,7 @@ D3D12RenderSystem::D3D12RenderSystem(const RenderSystemDescriptor& renderSystemD
     }
 
     /* Query and cache DXGI factory feature support */
-    tearingSupported_ = CheckFactoryFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING);
+    deviceCaps_.isTearingSupported = CheckFactoryFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING);
 
     /* Create command queue interface */
     commandQueue_   = MakeUnique<D3D12CommandQueue>(device_);
@@ -398,6 +399,20 @@ PipelineState* D3D12RenderSystem::CreatePipelineState(const ComputePipelineDescr
     return pipelineStates_.emplace<D3D12ComputePSO>(device_.GetNative(), defaultPipelineLayout_, pipelineStateDesc, pipelineCache);
 }
 
+PipelineState* D3D12RenderSystem::CreatePipelineState(const MeshPipelineDescriptor& pipelineStateDesc, PipelineCache* pipelineCache)
+{
+    #if LLGL_D3D12_ENABLE_FEATURELEVEL >= 1
+    if (deviceCaps_.meshShaderTier == D3D12_MESH_SHADER_TIER_NOT_SUPPORTED)
+        return nullptr;
+    ComPtr<ID3D12Device2> device2;
+    if (FAILED(device_.GetNative()->QueryInterface(IID_PPV_ARGS(&device2))))
+        return nullptr;
+    return pipelineStates_.emplace<D3D12MeshPSO>(device2.Get(), defaultPipelineLayout_, pipelineStateDesc, GetDefaultRenderPass(), pipelineCache);
+    #else
+    return nullptr; // not supported
+    #endif
+}
+
 void D3D12RenderSystem::Release(PipelineState& pipelineState)
 {
     SyncGPU();
@@ -518,7 +533,20 @@ void D3D12RenderSystem::CreateFactory(bool debugDevice)
 
 void D3D12RenderSystem::QueryVideoAdapters(long flags, ComPtr<IDXGIAdapter>& outPreferredAdatper)
 {
-    videoAdatperInfo_ = DXGetVideoAdapterInfo(factory_.Get(), flags, outPreferredAdatper.ReleaseAndGetAddressOf());
+    if ((flags & RenderSystemFlags::SoftwareDevice) != 0)
+    {
+        ComPtr<IDXGIAdapter> adapter;
+        HRESULT hr = factory_->EnumWarpAdapter(IID_PPV_ARGS(adapter.ReleaseAndGetAddressOf()));
+        DXThrowIfFailed(hr, "failed to enumerate D3D12 WARP adapters");
+
+        DXGI_ADAPTER_DESC desc;
+        hr = adapter->GetDesc(&desc);
+        DXThrowIfFailed(hr, "failed to get DXGI_ADAPTER_DESC from DXGI adapter");
+
+        DXConvertVideoAdapterInfo(adapter.Get(), desc, videoAdatperInfo_);
+    }
+    else
+        videoAdatperInfo_ = DXGetVideoAdapterInfo(factory_.Get(), flags, outPreferredAdatper.ReleaseAndGetAddressOf());
 }
 
 HRESULT D3D12RenderSystem::CreateDevice(IDXGIAdapter* preferredAdapter, long flags)
@@ -542,21 +570,24 @@ HRESULT D3D12RenderSystem::CreateDevice(IDXGIAdapter* preferredAdapter, long fla
     };
     HRESULT hr = S_OK;
 
-    if (preferredAdapter != nullptr)
+    if ((flags & RenderSystemFlags::SoftwareDevice) == 0)
     {
-        /* Try to create device with perferred adatper */
-        hr = device_.CreateDXDevice(featureLevels, flags, preferredAdapter);
-        if (SUCCEEDED(hr))
-            return hr;
-    }
+        if (preferredAdapter != nullptr)
+        {
+            /* Try to create device with perferred adatper */
+            hr = device_.CreateDXDevice(featureLevels, flags, preferredAdapter);
+            if (SUCCEEDED(hr))
+                return hr;
+        }
 
-    /* Try to create device with default adapter */
-    hr = device_.CreateDXDevice(featureLevels, flags);
-    if (SUCCEEDED(hr))
-    {
-        /* Update video adapter info with default adapter */
-        videoAdatperInfo_ = DXGetVideoAdapterInfo(factory_.Get());
-        return hr;
+        /* Try to create device with default adapter */
+        hr = device_.CreateDXDevice(featureLevels, flags);
+        if (SUCCEEDED(hr))
+        {
+            /* Update video adapter info with default adapter */
+            videoAdatperInfo_ = DXGetVideoAdapterInfo(factory_.Get());
+            return hr;
+        }
     }
 
     /* Use software adapter as fallback */
@@ -704,7 +735,10 @@ static std::vector<Format> GetDefaultSupportedDXTextureFormats()
 
     formats.insert(
         formats.end(),
-        { Format::BC4UNorm, Format::BC4SNorm, Format::BC5UNorm, Format::BC5SNorm }
+        {
+            Format::BC4UNorm,   Format::BC4SNorm,   Format::BC5UNorm, Format::BC5SNorm,
+            Format::BC6HUFloat, Format::BC6HSFloat, Format::BC7UNorm, Format::BC7UNorm_sRGB,
+        }
     );
 
     return formats;
@@ -747,6 +781,12 @@ void D3D12RenderSystem::QueryRenderingCaps(RenderingCapabilities& caps)
 
     const std::uint32_t maxThreadGroups = 65535u;
 
+    #if LLGL_D3D12_ENABLE_FEATURELEVEL >= 1
+    D3D12_FEATURE_DATA_D3D12_OPTIONS7 options7 = {};
+    device_.GetNative()->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &options7, sizeof(options7));
+    deviceCaps_.meshShaderTier = options7.MeshShaderTier;
+    #endif
+
     /* Query common attributes */
     caps.screenOrigin                               = ScreenOrigin::UpperLeft;
     caps.clippingRange                              = ClippingRange::ZeroToOne;
@@ -769,6 +809,11 @@ void D3D12RenderSystem::QueryRenderingCaps(RenderingCapabilities& caps)
     caps.features.hasTessellationShaders            = (featureLevel >= D3D_FEATURE_LEVEL_11_0);
     caps.features.hasTessellatorStage               = (featureLevel >= D3D_FEATURE_LEVEL_11_0);
     caps.features.hasComputeShaders                 = (featureLevel >= D3D_FEATURE_LEVEL_10_0);
+    #if LLGL_D3D12_ENABLE_FEATURELEVEL >= 1
+    caps.features.hasMeshShaders                    = (deviceCaps_.meshShaderTier != D3D12_MESH_SHADER_TIER_NOT_SUPPORTED);
+    #else
+    caps.features.hasMeshShaders                    = false;
+    #endif
     caps.features.hasInstancing                     = (featureLevel >= D3D_FEATURE_LEVEL_9_3);
     caps.features.hasOffsetInstancing               = (featureLevel >= D3D_FEATURE_LEVEL_9_3);
     caps.features.hasIndirectDrawing                = (featureLevel >= D3D_FEATURE_LEVEL_10_0);//???

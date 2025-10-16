@@ -20,16 +20,27 @@ namespace LLGL
 // Vulkan extension enumeration.
 enum class VKExt
 {
+    /* Required surface extensions */
+    KHR_android_surface,
+    KHR_win32_surface,
+    KHR_xlib_surface,
+
+#if LLGL_LINUX_ENABLE_WAYLAND
+    KHR_wayland_surface,
+#endif
+
     /* Khronos extensions */
     KHR_maintenance1,
     KHR_get_physical_device_properties2,
+    KHR_imageless_framebuffer,
 
     /* Multivendor extensions */
-    EXT_debug_marker,
     EXT_conditional_rendering,
-    EXT_transform_feedback,
     EXT_conservative_rasterization,
+    EXT_debug_marker,
+    EXT_debug_utils,
     EXT_nested_command_buffer,
+    EXT_transform_feedback,
 
     /* Enumeration entry counter */
     Count,

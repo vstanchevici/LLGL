@@ -33,6 +33,8 @@ LLGL_EXPORT long GetStageFlags(const ShaderType type)
         case ShaderType::Geometry:          return StageFlags::GeometryStage;
         case ShaderType::Fragment:          return StageFlags::FragmentStage;
         case ShaderType::Compute:           return StageFlags::ComputeStage;
+        case ShaderType::Task:              return StageFlags::TaskStage;
+        case ShaderType::Mesh:              return StageFlags::MeshStage;
     }
     return 0;
 }

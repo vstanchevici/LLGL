@@ -510,6 +510,11 @@ PipelineState* D3D11RenderSystem::CreatePipelineState(const ComputePipelineDescr
     return pipelineStates_.emplace<D3D11ComputePSO>(pipelineStateDesc);
 }
 
+PipelineState* D3D11RenderSystem::CreatePipelineState(const MeshPipelineDescriptor& /*pipelineStateDesc*/, PipelineCache* /*pipelineCache*/)
+{
+    return nullptr; // not supported
+}
+
 void D3D11RenderSystem::Release(PipelineState& pipelineState)
 {
     pipelineStates_.erase(&pipelineState);
@@ -874,6 +879,14 @@ static std::vector<Format> GetDefaultSupportedDXTextureFormats(D3D_FEATURE_LEVEL
             formats.end(),
             { Format::BC4UNorm, Format::BC4SNorm, Format::BC5UNorm, Format::BC5SNorm }
         );
+
+        if (featureLevel >= D3D_FEATURE_LEVEL_11_0)
+        {
+            formats.insert(
+                formats.end(),
+                { Format::BC6HUFloat, Format::BC6HSFloat, Format::BC7UNorm, Format::BC7UNorm_sRGB }
+            );
+        }
     }
 
     return formats;

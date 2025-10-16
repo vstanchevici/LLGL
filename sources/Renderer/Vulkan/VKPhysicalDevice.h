@@ -12,6 +12,7 @@
 #include "Vulkan.h"
 #include "VKDevice.h"
 #include <LLGL/RenderSystemFlags.h>
+#include <LLGL/Container/ArrayView.h>
 #include <vector>
 #include <set>
 #include <cstring>
@@ -31,7 +32,7 @@ class VKPhysicalDevice
         /* ----- Common ----- */
 
         // Picks the physical Vulkan device by enumerating the available devices from the specified Vulkan instance.
-        bool PickPhysicalDevice(VkInstance instance, long preferredDeviceFlags = 0);
+        bool PickPhysicalDevice(VkInstance instance, const ArrayView<const char*>& supportedInstanceExtensions, long preferredDeviceFlags = 0);
 
         // Loads the physical Vulkan device from a custom native handle.
         void LoadPhysicalDeviceWeakRef(VkPhysicalDevice physicalDevice);
@@ -108,24 +109,30 @@ class VKPhysicalDevice
     private:
 
         // Main device objects
-        VkPhysicalDevice                                        physicalDevice_             = VK_NULL_HANDLE;
+        VkPhysicalDevice                                        physicalDevice_                 = VK_NULL_HANDLE;
         std::vector<VkExtensionProperties>                      supportedExtensions_;
         std::set<const char*, CStringSWO>                       supportedExtensionNames_;
         std::vector<const char*>                                enabledExtensionNames_;
 
         // Common device properties and features
-        VkPhysicalDeviceFeatures2                               features_                   = {};
-        #if VK_EXT_nested_command_buffer
-        VkPhysicalDeviceNestedCommandBufferFeaturesEXT          featuresNestedCmdBuffers_   = {};
-        #endif
-        VkPhysicalDeviceProperties                              properties_                 = {};
-        VkPhysicalDeviceMemoryProperties                        memoryProperties_           = {};
+        VkPhysicalDeviceFeatures2                               features_                       = {};
+        VkPhysicalDeviceProperties                              properties_                     = {};
+        VkPhysicalDeviceMemoryProperties                        memoryProperties_               = {};
 
         // Extension specific
-        VkPhysicalDeviceConservativeRasterizationPropertiesEXT  conservRasterProps_         = {};
+        VkPhysicalDeviceConservativeRasterizationPropertiesEXT  conservRasterProps_             = {};
+
+        #if VK_EXT_nested_command_buffer
+        VkPhysicalDeviceNestedCommandBufferFeaturesEXT          nestedCmdBufferFeatures_        = {};
+        #endif
+
         #if VK_EXT_transform_feedback
-        VkPhysicalDeviceTransformFeedbackPropertiesEXT          transformFeedbackProps_     = {};
-        VkPhysicalDeviceTransformFeedbackFeaturesEXT            transformFeedbackFeatures_  = {};
+        VkPhysicalDeviceTransformFeedbackPropertiesEXT          transformFeedbackProps_         = {};
+        VkPhysicalDeviceTransformFeedbackFeaturesEXT            transformFeedbackFeatures_      = {};
+        #endif
+
+        #if VK_KHR_imageless_framebuffer
+        VkPhysicalDeviceImagelessFramebufferFeaturesKHR         imagelessFramebufferFeatures_   = {};
         #endif
 
 };

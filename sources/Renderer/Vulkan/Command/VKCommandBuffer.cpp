@@ -60,12 +60,12 @@ VKCommandBuffer::VKCommandBuffer(
     device_                 { device                                        },
     commandQueue_           { commandQueue                                  },
     commandPool_            { device, vkDestroyCommandPool                  },
-    numCommandBuffers_      { VKCommandBuffer::GetNumVkCommandBuffers(desc) },
-    queuePresentFamily_     { queueFamilyIndices.presentFamily              },
-    maxDrawIndirectCount_   { GetMaxDrawIndirectCount(physicalDevice)       },
     recordingFenceArray_    { VKPtr<VkFence>{ device, vkDestroyFence },
                               VKPtr<VkFence>{ device, vkDestroyFence },
                               VKPtr<VkFence>{ device, vkDestroyFence }      },
+    numCommandBuffers_      { VKCommandBuffer::GetNumVkCommandBuffers(desc) },
+    queuePresentFamily_     { queueFamilyIndices.presentFamily              },
+    maxDrawIndirectCount_   { GetMaxDrawIndirectCount(physicalDevice)       },
     descriptorSetPoolArray_ { device,
                               device,
                               device                                        }
@@ -277,7 +277,7 @@ void VKCommandBuffer::CopyBufferFromTexture(
     }
 
     //TODO: context must detect if barriers are incompatible
-    context_.BufferMemoryBarrier(dstBufferVK.GetVkBuffer(), 0, VK_WHOLE_SIZE, VK_ACCESS_TRANSFER_WRITE_BIT, true);
+    context_.BufferMemoryBarrier(dstBufferVK.GetVkBuffer(), 0, VK_WHOLE_SIZE, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_WRITE_BIT);
     VkImageLayout oldLayout = srcTextureVK.TransitionImageLayout(context_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, true);
 
     if (IsInsideRenderPass())
@@ -384,7 +384,7 @@ void VKCommandBuffer::CopyTextureFromBuffer(
     }
 
     //TODO: context must detect if barriers are incompatible
-    context_.BufferMemoryBarrier(srcBufferVK.GetVkBuffer(), 0, VK_WHOLE_SIZE, VK_ACCESS_TRANSFER_READ_BIT, true);
+    context_.BufferMemoryBarrier(srcBufferVK.GetVkBuffer(), 0, VK_WHOLE_SIZE, VK_ACCESS_NONE, VK_ACCESS_TRANSFER_READ_BIT);
     VkImageLayout oldLayout = dstTextureVK.TransitionImageLayout(context_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, true);
 
     if (IsInsideRenderPass())
@@ -525,10 +525,9 @@ void VKCommandBuffer::SetScissors(std::uint32_t numScissors, const Scissor* scis
 
 /* ----- Input Assembly ------ */
 
-void VKCommandBuffer::SetVertexBuffer(Buffer& buffer)
+//private
+void VKCommandBuffer::BindVertexBuffer(VKBuffer& bufferVK)
 {
-    auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
-
     VkBuffer buffers[] = { bufferVK.GetVkBuffer() };
     VkDeviceSize offsets[] = { 0 };
 
@@ -540,6 +539,22 @@ void VKCommandBuffer::SetVertexBuffer(Buffer& buffer)
         iaState_.ia0VertexStride            = bufferVK.GetStride();
         iaState_.ia0XfbCounterBuffer        = bufferVK.GetVkBuffer();
         iaState_.ia0XfbCounterBufferOffset  = bufferVK.GetXfbCounterOffset();
+    }
+}
+
+void VKCommandBuffer::SetVertexBuffer(Buffer& buffer)
+{
+    auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
+    BindVertexBuffer(bufferVK);
+}
+
+void VKCommandBuffer::SetVertexBuffer(Buffer& buffer, std::uint32_t numVertexAttribs, const VertexAttribute* vertexAttribs)
+{
+    if (numVertexAttribs > 0 && vertexAttribs != nullptr)
+    {
+        auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
+        bufferVK.SetStride(vertexAttribs[0].stride);
+        BindVertexBuffer(bufferVK);
     }
 }
 
@@ -580,15 +595,35 @@ void VKCommandBuffer::SetResourceHeap(ResourceHeap& resourceHeap, std::uint32_t 
         return /*Descriptor set out of bounds*/;
 
     boundPipelineState_->BindHeapDescriptorSet(commandBuffer_, resourceHeapVK.GetVkDescriptorSets()[descriptorSet]);
-    resourceHeapVK.SubmitPipelineBarrier(commandBuffer_, descriptorSet);
+
+    if (boundPipelineBarrier_ != nullptr)
+        resourceHeapVK.SetBarrierSlots(*boundPipelineBarrier_, descriptorSet);
 }
 
 void VKCommandBuffer::SetResource(std::uint32_t descriptor, Resource& resource)
 {
-    if (boundBindingTable_ != nullptr && descriptor < boundBindingTable_->dynamicBindings.size())
+    if (boundBindingTable_ == nullptr)
+        return /*No PSO bound*/;
+
+    if (!(descriptor < boundBindingTable_->dynamicBindings.size()))
+        return /*Out of bounds*/;
+
+    const VKLayoutBinding& binding = boundBindingTable_->dynamicBindings[descriptor];
+    descriptorCache_->EmplaceDescriptor(resource, binding, descriptorSetWriter_);
+
+    /* Update pipeline barrier slot */
+    if (boundPipelineBarrier_ != nullptr)
     {
-        const VKLayoutBinding& binding = boundBindingTable_->dynamicBindings[descriptor];
-        descriptorCache_->EmplaceDescriptor(resource, binding, descriptorSetWriter_);
+        if (resource.GetResourceType() == ResourceType::Buffer)
+        {
+            VKBuffer& bufferVK = LLGL_CAST(VKBuffer&, resource);
+            boundPipelineBarrier_->SetBufferBarrier(binding.barrierSlot, bufferVK.GetVkBuffer());
+        }
+        else if (resource.GetResourceType() == ResourceType::Texture)
+        {
+            VKTexture& textureVK = LLGL_CAST(VKTexture&, resource);
+            boundPipelineBarrier_->SetImageBarrier(binding.barrierSlot, textureVK.GetVkImage());
+        }
     }
 }
 
@@ -598,7 +633,71 @@ void VKCommandBuffer::ResourceBarrier(
     std::uint32_t       numTextures,
     Texture* const *    textures)
 {
-    //TODO
+    VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+
+    SmallVector<VkBufferMemoryBarrier, 32u>  bufferBarriers;
+    SmallVector<VkImageMemoryBarrier, 32u>   imageBarriers;
+
+    /* Preapre buffer barriers for read.write access */
+    bufferBarriers.resize(numBuffers);
+
+    for_range(i, numBuffers)
+    {
+        VkBufferMemoryBarrier& barrier = bufferBarriers[i];
+
+        auto* bufferVK = LLGL_CAST(VKBuffer*, buffers[i]);
+
+        barrier.sType                   = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.pNext                   = nullptr;
+        barrier.srcAccessMask           = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask           = VK_ACCESS_SHADER_READ_BIT;
+        barrier.srcQueueFamilyIndex     = 0;
+        barrier.dstQueueFamilyIndex     = 0;
+        barrier.buffer                  = bufferVK->GetVkBuffer();
+        barrier.offset                  = 0;
+        barrier.size                    = VK_WHOLE_SIZE;
+    }
+
+    /* Prepare image barriers for texture read/write access */
+    imageBarriers.resize(numTextures);
+
+    for_range(i, numTextures)
+    {
+        VkImageMemoryBarrier& barrier = imageBarriers[i];
+
+        auto* textureVK = LLGL_CAST(VKTexture*, textures[i]);
+
+        barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.pNext                           = nullptr;
+        barrier.srcAccessMask                   = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask                   = VK_ACCESS_SHADER_READ_BIT;
+        barrier.oldLayout                       = textureVK->GetVkImageLayout();
+        barrier.newLayout                       = textureVK->GetVkImageLayout();
+        barrier.srcQueueFamilyIndex             = 0;
+        barrier.dstQueueFamilyIndex             = 0;
+        barrier.image                           = textureVK->GetVkImage();
+        barrier.subresourceRange.aspectMask     = VKImageUtils::GetInclusiveVkImageAspect(textureVK->GetVkFormat());
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.baseMipLevel   = 0;
+        barrier.subresourceRange.levelCount     = textureVK->GetNumMipLevels();
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount     = textureVK->GetNumArrayLayers();
+    }
+
+    /* Encode pipeline barrier command into command buffer */
+    vkCmdPipelineBarrier(
+        commandBuffer_,
+        srcStageMask,
+        dstStageMask,
+        0, // VkDependencyFlags
+        0, // memoryBarrierCount
+        nullptr, // pMemoryBarriers
+        static_cast<std::uint32_t>(bufferBarriers.size()),
+        bufferBarriers.data(),
+        static_cast<std::uint32_t>(imageBarriers.size()),
+        imageBarriers.data()
+    );
 }
 
 /* ----- Render Passes ----- */
@@ -639,6 +738,8 @@ void VKCommandBuffer::BeginRenderPass(
         framebufferRenderArea_.extent   = renderTargetVK.GetVkExtent();
         numColorAttachments_            = renderTargetVK.GetNumColorAttachments();
         hasDepthStencilAttachment_      = (renderTargetVK.HasDepthAttachment() || renderTargetVK.HasStencilAttachment());
+
+        renderTargetVK.OverrideImageLayoutsForRenderPass();
     }
 
     hasDynamicScissorRect_ = false;
@@ -831,7 +932,7 @@ void VKCommandBuffer::SetPipelineState(PipelineState& pipelineState)
     }
 
     /* Keep reference to bound piepline layout (can be null) */
-    boundPipelineState_     = &pipelineStateVK;
+    boundPipelineState_ = &pipelineStateVK;
 
     if (pipelineStateVK.GetBindingTableAndDescriptorCache(boundBindingTable_, descriptorCache_))
     {
@@ -843,6 +944,12 @@ void VKCommandBuffer::SetPipelineState(PipelineState& pipelineState)
     }
     else
         descriptorCache_ = nullptr;
+
+    /* Bind automatic pipeline barrier */
+    if (const VKPipelineLayout* pipelineLayoutVK = pipelineStateVK.GetPipelineLayout())
+        boundPipelineBarrier_ = pipelineLayoutVK->GetAutoPipelineBarrier();
+    else
+        boundPipelineBarrier_ = nullptr;
 }
 
 void VKCommandBuffer::SetBlendFactor(const float color[4])
@@ -1003,54 +1110,63 @@ void VKCommandBuffer::EndStreamOutput()
 void VKCommandBuffer::Draw(std::uint32_t numVertices, std::uint32_t firstVertex)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDraw(commandBuffer_, numVertices, 1, firstVertex, 0);
 }
 
 void VKCommandBuffer::DrawIndexed(std::uint32_t numIndices, std::uint32_t firstIndex)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDrawIndexed(commandBuffer_, numIndices, 1, firstIndex, 0, 0);
 }
 
 void VKCommandBuffer::DrawIndexed(std::uint32_t numIndices, std::uint32_t firstIndex, std::int32_t vertexOffset)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDrawIndexed(commandBuffer_, numIndices, 1, firstIndex, vertexOffset, 0);
 }
 
 void VKCommandBuffer::DrawInstanced(std::uint32_t numVertices, std::uint32_t firstVertex, std::uint32_t numInstances)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDraw(commandBuffer_, numVertices, numInstances, firstVertex, 0);
 }
 
 void VKCommandBuffer::DrawInstanced(std::uint32_t numVertices, std::uint32_t firstVertex, std::uint32_t numInstances, std::uint32_t firstInstance)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDraw(commandBuffer_, numVertices, numInstances, firstVertex, firstInstance);
 }
 
 void VKCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uint32_t numInstances, std::uint32_t firstIndex)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDrawIndexed(commandBuffer_, numIndices, numInstances, firstIndex, 0, 0);
 }
 
 void VKCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uint32_t numInstances, std::uint32_t firstIndex, std::int32_t vertexOffset)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDrawIndexed(commandBuffer_, numIndices, numInstances, firstIndex, vertexOffset, 0);
 }
 
 void VKCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uint32_t numInstances, std::uint32_t firstIndex, std::int32_t vertexOffset, std::uint32_t firstInstance)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDrawIndexed(commandBuffer_, numIndices, numInstances, firstIndex, vertexOffset, firstInstance);
 }
 
 void VKCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
     vkCmdDrawIndirect(commandBuffer_, bufferVK.GetVkBuffer(), offset, 1, 0);
 }
@@ -1058,6 +1174,7 @@ void VKCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset)
 void VKCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset, std::uint32_t numCommands, std::uint32_t stride)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
     if (maxDrawIndirectCount_ < numCommands)
     {
@@ -1077,6 +1194,7 @@ void VKCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset, std::ui
 void VKCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
     vkCmdDrawIndexedIndirect(commandBuffer_, bufferVK.GetVkBuffer(), offset, 1, 0);
 }
@@ -1084,6 +1202,7 @@ void VKCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset)
 void VKCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset, std::uint32_t numCommands, std::uint32_t stride)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
     if (maxDrawIndirectCount_ < numCommands)
     {
@@ -1104,6 +1223,7 @@ void VKCommandBuffer::DrawStreamOutput()
 {
     LLGL_ASSERT_VK_EXT(EXT_transform_feedback);
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDrawIndirectByteCountEXT(commandBuffer_, 1, 0, iaState_.ia0XfbCounterBuffer, iaState_.ia0XfbCounterBufferOffset, 0, iaState_.ia0VertexStride);
 }
 
@@ -1112,12 +1232,14 @@ void VKCommandBuffer::DrawStreamOutput()
 void VKCommandBuffer::Dispatch(std::uint32_t numWorkGroupsX, std::uint32_t numWorkGroupsY, std::uint32_t numWorkGroupsZ)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     vkCmdDispatch(commandBuffer_, numWorkGroupsX, numWorkGroupsY, numWorkGroupsZ);
 }
 
 void VKCommandBuffer::DispatchIndirect(Buffer& buffer, std::uint64_t offset)
 {
     FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
     auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
     vkCmdDispatchIndirect(commandBuffer_, bufferVK.GetVkBuffer(), offset);
 }
@@ -1359,6 +1481,12 @@ void VKCommandBuffer::FlushDescriptorCache()
     }
 }
 
+void VKCommandBuffer::SubmitAutoPipelineBarrier()
+{
+    if (boundPipelineBarrier_ != nullptr)
+        boundPipelineBarrier_->Submit(commandBuffer_);
+}
+
 void VKCommandBuffer::AcquireNextBuffer()
 {
     /* Move to next command buffer index */
@@ -1384,10 +1512,11 @@ void VKCommandBuffer::AcquireNextBuffer()
 
 void VKCommandBuffer::ResetBindingStates()
 {
-    boundSwapChain_     = nullptr;
-    boundBindingTable_  = nullptr;
-    boundPipelineState_ = nullptr;
-    descriptorCache_    = nullptr;
+    boundSwapChain_         = nullptr;
+    boundBindingTable_      = nullptr;
+    boundPipelineState_     = nullptr;
+    boundPipelineBarrier_   = nullptr;
+    descriptorCache_        = nullptr;
 }
 
 #if 0

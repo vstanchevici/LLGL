@@ -37,6 +37,8 @@ VkShaderStageFlagBits Map(const ShaderType shaderType)
         case ShaderType::Geometry:          return VK_SHADER_STAGE_GEOMETRY_BIT;
         case ShaderType::Fragment:          return VK_SHADER_STAGE_FRAGMENT_BIT;
         case ShaderType::Compute:           return VK_SHADER_STAGE_COMPUTE_BIT;
+        case ShaderType::Task:              break; //return VK_SHADER_STAGE_TASK_BIT_EXT;
+        case ShaderType::Mesh:              break; //return VK_SHADER_STAGE_MESH_BIT_EXT;
     }
     MapFailed("ShaderType", "VkShaderStageFlagBits");
 }
@@ -132,10 +134,11 @@ VkFormat Map(const Format format)
         case Format::BGRA8SInt:         return VK_FORMAT_B8G8R8A8_SINT;
 
         /* --- Packed formats --- */
-        case Format::RGB10A2UNorm:      return VK_FORMAT_A2B10G10R10_UNORM_PACK32;  // requires swizzling for CPU access
-        case Format::RGB10A2UInt:       return VK_FORMAT_A2B10G10R10_UINT_PACK32;   // requires swizzling for CPU access
-        case Format::RG11B10Float:      return VK_FORMAT_B10G11R11_UFLOAT_PACK32;   // requires swizzling for CPU access
-        case Format::RGB9E5Float:       return VK_FORMAT_E5B9G9R9_UFLOAT_PACK32;    // requires swizzling for CPU access
+        case Format::RGB10A2UNorm:      return VK_FORMAT_A2B10G10R10_UNORM_PACK32;  // Requires swizzling for CPU access
+        case Format::RGB10A2UInt:       return VK_FORMAT_A2B10G10R10_UINT_PACK32;   // Requires swizzling for CPU access
+        case Format::RG11B10Float:      return VK_FORMAT_B10G11R11_UFLOAT_PACK32;   // Requires swizzling for CPU access
+        case Format::RGB9E5Float:       return VK_FORMAT_E5B9G9R9_UFLOAT_PACK32;    // Requires swizzling for CPU access
+        case Format::BGR5A1UNorm:       return VK_FORMAT_B5G5R5A1_UNORM_PACK16;     // Requires swizzling for CPU access
 
         /* --- Depth-stencil formats --- */
         case Format::D16UNorm:          return VK_FORMAT_D16_UNORM;
@@ -154,6 +157,10 @@ VkFormat Map(const Format format)
         case Format::BC4SNorm:          return VK_FORMAT_BC4_SNORM_BLOCK;
         case Format::BC5UNorm:          return VK_FORMAT_BC5_UNORM_BLOCK;
         case Format::BC5SNorm:          return VK_FORMAT_BC5_SNORM_BLOCK;
+        case Format::BC6HUFloat:        return VK_FORMAT_BC6H_UFLOAT_BLOCK;
+        case Format::BC6HSFloat:        return VK_FORMAT_BC6H_SFLOAT_BLOCK;
+        case Format::BC7UNorm:          return VK_FORMAT_BC7_UNORM_BLOCK;
+        case Format::BC7UNorm_sRGB:     return VK_FORMAT_BC7_SRGB_BLOCK;
 
         /* --- Advanced scalable texture compression (ASTC) formats --- */
         case Format::ASTC4x4:           return VK_FORMAT_ASTC_4x4_UNORM_BLOCK;
@@ -572,6 +579,7 @@ Format Unmap(const VkFormat format)
         case VK_FORMAT_A2B10G10R10_UINT_PACK32:     return Format::RGB10A2UInt;
         case VK_FORMAT_B10G11R11_UFLOAT_PACK32:     return Format::RG11B10Float;
         case VK_FORMAT_E5B9G9R9_UFLOAT_PACK32:      return Format::RGB9E5Float;
+        case VK_FORMAT_B5G5R5A1_UNORM_PACK16:       return Format::BGR5A1UNorm;
 
         /* --- Depth-stencil formats --- */
         case VK_FORMAT_D16_UNORM:                   return Format::D16UNorm;
@@ -590,6 +598,10 @@ Format Unmap(const VkFormat format)
         case VK_FORMAT_BC4_SNORM_BLOCK:             return Format::BC4SNorm;
         case VK_FORMAT_BC5_UNORM_BLOCK:             return Format::BC5UNorm;
         case VK_FORMAT_BC5_SNORM_BLOCK:             return Format::BC5SNorm;
+        case VK_FORMAT_BC6H_UFLOAT_BLOCK:           return Format::BC6HUFloat;
+        case VK_FORMAT_BC6H_SFLOAT_BLOCK:           return Format::BC6HSFloat;
+        case VK_FORMAT_BC7_UNORM_BLOCK:             return Format::BC7UNorm;
+        case VK_FORMAT_BC7_SRGB_BLOCK:              return Format::BC7UNorm_sRGB;
 
         /* --- Advanced scalable texture compression (ASTC) formats --- */
         case VK_FORMAT_ASTC_4x4_UNORM_BLOCK:        return Format::ASTC4x4;

@@ -9,6 +9,7 @@
 #define LLGL_LINUX_GL_SWAP_CHAIN_CONTEXT_H
 
 
+#include "LinuxGLContextX11.h"
 #include "../GLSwapChainContext.h"
 #include "../../OpenGL.h"
 #include <X11/Xlib.h>
@@ -21,12 +22,12 @@ namespace LLGL
 class Surface;
 class LinuxGLContext;
 
-class LinuxGLSwapChainContext final : public GLSwapChainContext
+class LinuxX11GLSwapChainContext final : public GLSwapChainContext
 {
 
     public:
 
-        LinuxGLSwapChainContext(LinuxGLContext& context, Surface& surface);
+        LinuxX11GLSwapChainContext(LinuxGLContextX11& context, Surface& surface);
 
         bool HasDrawable() const override;
         bool SwapBuffers() override;
@@ -34,7 +35,7 @@ class LinuxGLSwapChainContext final : public GLSwapChainContext
 
     public:
 
-        static bool MakeCurrentGLXContext(LinuxGLSwapChainContext* context);
+        static bool MakeCurrentGLXContext(LinuxX11GLSwapChainContext* context);
 
     private:
 

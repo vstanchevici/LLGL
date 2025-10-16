@@ -35,13 +35,13 @@ static bool CheckDeviceExtensionSupport(
     VkPhysicalDevice                    physicalDevice,
     const char* const*                  requiredExtensions,
     std::size_t                         numRequiredExtensions,
-    std::vector<VkExtensionProperties>& supportedExtensions)
+    std::vector<VkExtensionProperties>& outSupportedExtensions)
 {
     /* Check if device supports all required extensions */
-    supportedExtensions = VKQueryDeviceExtensionProperties(physicalDevice);
+    outSupportedExtensions = VKQueryDeviceExtensionProperties(physicalDevice);
     std::set<std::string> unsupported(requiredExtensions, requiredExtensions + numRequiredExtensions);
 
-    for (const VkExtensionProperties& ext : supportedExtensions)
+    for (const VkExtensionProperties& ext : outSupportedExtensions)
     {
         if (unsupported.empty())
             break;
@@ -55,7 +55,7 @@ static bool CheckDeviceExtensionSupport(
 
 static bool IsPhysicalDeviceSuitable(
     VkPhysicalDevice                    physicalDevice,
-    std::vector<VkExtensionProperties>& supportedExtensions)
+    std::vector<VkExtensionProperties>& outSupportedExtensions)
 {
     /* Check if physical devices supports at least these extensions */
     std::vector<VkExtensionProperties> extensions;
@@ -69,7 +69,7 @@ static bool IsPhysicalDeviceSuitable(
     if (suitable)
     {
         /* Store all supported extensions */
-        supportedExtensions = std::move(extensions);
+        outSupportedExtensions = std::move(extensions);
         return true;
     }
 
@@ -87,12 +87,12 @@ static bool IsPreferredDeviceVendor(DeviceVendor vendor, long preferredDeviceFla
     }
 }
 
-bool VKPhysicalDevice::PickPhysicalDevice(VkInstance instance, long preferredDeviceFlags)
+bool VKPhysicalDevice::PickPhysicalDevice(VkInstance instance, const ArrayView<const char*>& supportedInstanceExtensions, long preferredDeviceFlags)
 {
     /* Query all physical devices and pick suitable */
     std::vector<VkPhysicalDevice> physicalDevices = VKQueryPhysicalDevices(instance);
 
-    auto TryPickPhysicalDevice = [this](VkPhysicalDevice device) -> bool
+    auto TryPickPhysicalDevice = [this, &supportedInstanceExtensions](VkPhysicalDevice device) -> bool
     {
         if (!IsPhysicalDeviceSuitable(device, supportedExtensions_))
         {
@@ -175,12 +175,12 @@ static std::vector<Format> GetDefaultSupportedVKTextureFormats()
         Format::RGBA32UInt,         Format::RGBA32SInt,         Format::RGBA32Float,
         Format::RGBA64Float,
         Format::BGRA8UNorm,         Format::BGRA8UNorm_sRGB,    Format::BGRA8SNorm,         Format::BGRA8UInt,          Format::BGRA8SInt,
-        Format::RGB10A2UNorm,       Format::RGB10A2UInt,        Format::RG11B10Float,       Format::RGB9E5Float,
+        Format::RGB10A2UNorm,       Format::RGB10A2UInt,        Format::RG11B10Float,       Format::RGB9E5Float,        Format::BGR5A1UNorm,
         Format::D16UNorm,           Format::D24UNormS8UInt,     Format::D32Float,           Format::D32FloatS8X24UInt,
     };
 }
 
-static std::vector<Format> GetCompressedVKTextureFormatsS3TC()
+static std::vector<Format> GetCompressedVKTextureFormatsBC()
 {
     return
     {
@@ -189,6 +189,8 @@ static std::vector<Format> GetCompressedVKTextureFormatsS3TC()
         Format::BC3UNorm,   Format::BC3UNorm_sRGB,
         Format::BC4UNorm,   Format::BC4SNorm,
         Format::BC5UNorm,   Format::BC5SNorm,
+        Format::BC6HUFloat, Format::BC6HSFloat,
+        Format::BC7UNorm,   Format::BC7UNorm_sRGB,
     };
 }
 
@@ -266,8 +268,8 @@ void VKPhysicalDevice::QueryRenderingCaps(RenderingCapabilities& caps)
 
     if (features.textureCompressionBC != VK_FALSE)
     {
-        const std::vector<Format> compressedFormatsS3TC = GetCompressedVKTextureFormatsS3TC();
-        caps.textureFormats.insert(caps.textureFormats.end(), compressedFormatsS3TC.begin(), compressedFormatsS3TC.end());
+        const std::vector<Format> compressedFormatsBC = GetCompressedVKTextureFormatsBC();
+        caps.textureFormats.insert(caps.textureFormats.end(), compressedFormatsBC.begin(), compressedFormatsBC.end());
     }
 
     if (features.textureCompressionASTC_LDR != VK_FALSE)
@@ -366,21 +368,9 @@ VKDevice VKPhysicalDevice::CreateLogicalDevice(VkDevice customLogicalDevice)
 {
     VKDevice device;
     if (customLogicalDevice != VK_NULL_HANDLE)
-    {
-        device.LoadLogicalDeviceWeakRef(
-            physicalDevice_,
-            customLogicalDevice
-        );
-    }
+        device.LoadLogicalDeviceWeakRef(physicalDevice_, customLogicalDevice);
     else
-    {
-        device.CreateLogicalDevice(
-            physicalDevice_,
-            &features_,
-            enabledExtensionNames_.data(),
-            static_cast<std::uint32_t>(enabledExtensionNames_.size())
-        );
-    }
+        device.CreateLogicalDevice(physicalDevice_, &features_, GetExtensionNames());
     return device;
 }
 
@@ -447,7 +437,7 @@ void VKPhysicalDevice::QueryDeviceFeatures()
 
     VKBaseStructureInfo* currentDesc = nullptr;
 
-    auto ChainDescriptor = [&currentDesc](void* descPtr, VkStructureType type)
+    auto AppendFeaturesDesc = [&currentDesc](void* descPtr, VkStructureType type) -> void
     {
         /* Chain next descriptor into previous one */
         currentDesc->pNext = descPtr;
@@ -464,12 +454,18 @@ void VKPhysicalDevice::QueryDeviceFeatures()
     currentDesc = reinterpret_cast<VKBaseStructureInfo*>(&features_);
 
     #if VK_EXT_nested_command_buffer
-    ChainDescriptor(&featuresNestedCmdBuffers_, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_NESTED_COMMAND_BUFFER_FEATURES_EXT);
+    if (SupportsExtension(VK_EXT_NESTED_COMMAND_BUFFER_EXTENSION_NAME))
+        AppendFeaturesDesc(&nestedCmdBufferFeatures_, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_NESTED_COMMAND_BUFFER_FEATURES_EXT);
     #endif
 
     #if VK_EXT_transform_feedback
     if (SupportsExtension(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME))
-        ChainDescriptor(&transformFeedbackFeatures_, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT);
+        AppendFeaturesDesc(&transformFeedbackFeatures_, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT);
+    #endif
+
+    #if VK_KHR_imageless_framebuffer
+    if (SupportsExtension(VK_KHR_IMAGELESS_FRAMEBUFFER_EXTENSION_NAME))
+        AppendFeaturesDesc(&imagelessFramebufferFeatures_, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES_KHR);
     #endif
 
     vkGetPhysicalDeviceFeatures2(physicalDevice_, &features_);

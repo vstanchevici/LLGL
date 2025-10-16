@@ -10,7 +10,7 @@
 
 
 #include <LLGL/Texture.h>
-#include <vulkan/vulkan.h>
+#include "../Vulkan.h"
 #include "../VKPtr.h"
 #include <cstdint>
 
@@ -123,6 +123,13 @@ class VKDeviceImage
         inline void SetMemoryRequirements(const VkMemoryRequirements& memoryRequirements)
         {
             memoryRequirements_ = memoryRequirements;
+        }
+
+        // Overrides the image layout. This is not called a setter to indicate that this should only be called
+        // by classes that need to override this value, such as VKRenderTarget.
+        inline void OverrideVkImageLayout(VkImageLayout layout)
+        {
+            layout_ = layout;
         }
 
     private:

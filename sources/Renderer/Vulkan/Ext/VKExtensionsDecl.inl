@@ -23,19 +23,15 @@ DECL_VKPROC( vkCreateWin32SurfaceKHR );
 
 DECL_VKPROC( vkCreateXlibSurfaceKHR );
 
+#if LLGL_LINUX_ENABLE_WAYLAND
+DECL_VKPROC( vkCreateWaylandSurfaceKHR );
+#endif
+
 #elif defined LLGL_OS_ANDROID
 
 DECL_VKPROC( vkCreateAndroidSurfaceKHR );
 
 #endif
-
-/* VK_EXT_debug_marker */
-
-DECL_VKPROC( vkDebugMarkerSetObjectTagEXT  );
-DECL_VKPROC( vkDebugMarkerSetObjectNameEXT );
-DECL_VKPROC( vkCmdDebugMarkerBeginEXT      );
-DECL_VKPROC( vkCmdDebugMarkerEndEXT        );
-DECL_VKPROC( vkCmdDebugMarkerInsertEXT     );
 
 /* VK_EXT_conditional_rendering */
 
@@ -50,6 +46,28 @@ DECL_VKPROC( vkCmdEndTransformFeedbackEXT         );
 DECL_VKPROC( vkCmdBeginQueryIndexedEXT            );
 DECL_VKPROC( vkCmdEndQueryIndexedEXT              );
 DECL_VKPROC( vkCmdDrawIndirectByteCountEXT        );
+
+/* VK_EXT_debug_marker */
+
+DECL_VKPROC( vkDebugMarkerSetObjectTagEXT  );
+DECL_VKPROC( vkDebugMarkerSetObjectNameEXT );
+DECL_VKPROC( vkCmdDebugMarkerBeginEXT      );
+DECL_VKPROC( vkCmdDebugMarkerEndEXT        );
+DECL_VKPROC( vkCmdDebugMarkerInsertEXT     );
+
+/* VK_EXT_debug_utils */
+
+DECL_VKPROC( vkCmdBeginDebugUtilsLabelEXT    );
+DECL_VKPROC( vkCmdEndDebugUtilsLabelEXT      );
+DECL_VKPROC( vkCmdInsertDebugUtilsLabelEXT   );
+DECL_VKPROC( vkCreateDebugUtilsMessengerEXT  );
+DECL_VKPROC( vkDestroyDebugUtilsMessengerEXT );
+DECL_VKPROC( vkQueueBeginDebugUtilsLabelEXT  );
+DECL_VKPROC( vkQueueEndDebugUtilsLabelEXT    );
+DECL_VKPROC( vkQueueInsertDebugUtilsLabelEXT );
+DECL_VKPROC( vkSetDebugUtilsObjectNameEXT    );
+DECL_VKPROC( vkSetDebugUtilsObjectTagEXT     );
+DECL_VKPROC( vkSubmitDebugUtilsMessageEXT    );
 
 /* VK_KHR_get_physical_device_properties2 */
 

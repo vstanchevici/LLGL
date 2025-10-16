@@ -11,7 +11,7 @@
 
 #include <LLGL/Texture.h>
 #include "VKDeviceImage.h"
-#include <vulkan/vulkan.h>
+#include "../Vulkan.h"
 #include "../VKPtr.h"
 #include <cstdint>
 
@@ -45,6 +45,10 @@ class VKTexture final : public Texture
             VKDeviceMemoryManager&      deviceMemoryMngr,
             const TextureDescriptor&    desc
         );
+
+    public:
+
+        void SetDebugName(const char* name) override;
 
     public:
 
@@ -191,7 +195,17 @@ class VKTexture final : public Texture
             return image_.GetMemoryRegion();
         }
 
+
         void SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize) override;
+
+
+        // Overrides the image layout. This is not called a setter to indicate that this should only be called
+        // by classes that need to override this value, such as VKRenderTarget.
+        inline void OverrideVkImageLayout(VkImageLayout layout)
+        {
+            image_.OverrideVkImageLayout(layout);
+        }
+
 
     private:
 
@@ -199,6 +213,7 @@ class VKTexture final : public Texture
 
     private:
 
+        VkDevice                device_             = VK_NULL_HANDLE;
         VKDeviceImage           image_;
         VKPtr<VkImageView>      imageView_;
 

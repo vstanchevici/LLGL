@@ -11,6 +11,9 @@ ENABLE_D3D12="OFF"
 ENABLE_EXAMPLES="ON"
 ENABLE_TESTS="ON"
 ENABLE_GL2X="OFF"
+ENABLE_SPIRV_REFLECT="OFF"
+ENABLE_WAYLAND="OFF"
+ENABLE_GOLANG="OFF"
 BUILD_TYPE="Release"
 UNITY_BUILD="OFF"
 PROJECT_ONLY=0
@@ -48,7 +51,10 @@ fi
 if [ $PLATFORM_MSYS -eq 1 ]; then
     echo "  --d3d11 ................... Include D3D11 renderer (MSYS only) "
     echo "  --d3d12 ................... Include D3D12 renderer (MSYS only) "
+else
+    echo "  --wayland ................. Include Wayland support"
 fi
+    echo "  --golang .................. Include Go wrapper (aka. Golang)"
     echo "  --no-examples ............. Exclude example projects"
     echo "  --no-tests ................ Exclude test projects"
     echo "NOTES:"
@@ -86,6 +92,10 @@ for ARG in "$@"; do
         ENABLE_NULL="ON"
     elif [ "$ARG" = "--vk" ] || [ "$ARG" = "--vulkan" ]; then # Accept '--vulkan' for backward compatibility
         ENABLE_VULKAN="ON"
+        # Check if SPIRV-Headers is available from the external/ directory
+        if [ -d "$SOURCE_DIR/external/SPIRV-Headers/include/spirv" ]; then
+            ENABLE_SPIRV_REFLECT="ON"
+        fi
     elif [ "$ARG" = "--d3d11" ]; then
         if [ $PLATFORM_MSYS -eq 1 ]; then
             ENABLE_D3D11="ON"
@@ -98,6 +108,14 @@ for ARG in "$@"; do
         else
             echo "Warning: D3D12 backend is only supported for MSYS"
         fi
+    elif [ "$ARG" = "--wayland" ]; then
+        if [ $PLATFORM_MSYS -eq 0 ]; then
+            ENABLE_WAYLAND="ON"
+        else
+            echo "Warning: Wayland is not supported for MSYS"
+        fi
+    elif [ "$ARG" = "--golang" ]; then
+        ENABLE_GOLANG="ON"
     elif [ "$ARG" = "--no-examples" ]; then
         ENABLE_EXAMPLES="OFF"
     elif [ "$ARG" = "--no-tests" ]; then
@@ -152,12 +170,15 @@ fi
 # Build into output directory (this syntax requires CMake 3.13+)
 OPTIONS=(
     -DLLGL_BUILD_WRAPPER_C99=ON
+    -DLLGL_BUILD_WRAPPER_GO=$ENABLE_GOLANG
     -DLLGL_BUILD_RENDERER_OPENGL=ON
     -DLLGL_GL_ENABLE_OPENGL2X=$ENABLE_GL2X
     -DLLGL_BUILD_RENDERER_NULL=$ENABLE_NULL
     -DLLGL_BUILD_RENDERER_VULKAN=$ENABLE_VULKAN
     -DLLGL_BUILD_RENDERER_DIRECT3D11=$ENABLE_D3D11
     -DLLGL_BUILD_RENDERER_DIRECT3D12=$ENABLE_D3D12
+    -DLLGL_VK_ENABLE_SPIRV_REFLECT=ENABLE_SPIRV_REFLECT
+    -DLLGL_LINUX_ENABLE_WAYLAND=$ENABLE_WAYLAND
     -DLLGL_BUILD_EXAMPLES=$ENABLE_EXAMPLES
     -DLLGL_BUILD_TESTS=$ENABLE_TESTS
     -DLLGL_BUILD_STATIC_LIB=$STATIC_LIB

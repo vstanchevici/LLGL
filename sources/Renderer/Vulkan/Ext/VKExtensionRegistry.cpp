@@ -19,20 +19,32 @@ static bool g_VKRegisteredExtensions[static_cast<std::size_t>(VKExt::Count)] = {
 
 static const char* g_VKOptionalExtensions[] =
 {
-    #if VK_KHR_sampler_mirror_clamp_to_edge
-    VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME,
-    #endif
-    #if VK_KHR_get_physical_device_properties2
-    VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
-    #endif
-    #if VK_EXT_debug_marker
-    VK_EXT_DEBUG_MARKER_EXTENSION_NAME,
-    #endif
     #if VK_EXT_conditional_rendering
     VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME,
     #endif
     #if VK_EXT_conservative_rasterization
     VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME,
+    #endif
+    #if VK_EXT_debug_marker
+    VK_EXT_DEBUG_MARKER_EXTENSION_NAME,
+    #endif
+    #if VK_EXT_debug_report
+    VK_EXT_DEBUG_REPORT_EXTENSION_NAME,
+    #endif
+    #if VK_EXT_debug_utils
+    VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+    #endif
+    #if VK_KHR_get_physical_device_properties2
+    VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+    #endif
+    #if VK_KHR_imageless_framebuffer
+    VK_KHR_IMAGELESS_FRAMEBUFFER_EXTENSION_NAME,
+    #endif
+    #if VK_KHR_portability_enumeration
+    VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
+    #endif
+    #if VK_KHR_sampler_mirror_clamp_to_edge
+    VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME,
     #endif
     #if VK_EXT_transform_feedback
     VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME,
@@ -67,6 +79,9 @@ static bool IsVulkanInstanceExtRequired(const StringView& name)
         || name == VK_KHR_WIN32_SURFACE_EXTENSION_NAME
         #elif defined LLGL_OS_LINUX
         || name == VK_KHR_XLIB_SURFACE_EXTENSION_NAME
+        #if LLGL_LINUX_ENABLE_WAYLAND
+        || name == VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME
+        #endif
         #elif defined LLGL_OS_ANDROID
         || name == VK_KHR_ANDROID_SURFACE_EXTENSION_NAME
         #elif defined LLGL_OS_MACOS || defined LLGL_OS_IOS
@@ -94,8 +109,14 @@ static bool IsVulkanInstanceExtDebugOnly(const StringView& name)
     return
     (
         false
+        #if VK_EXT_debug_marker
+        || name == VK_EXT_DEBUG_MARKER_EXTENSION_NAME
+        #endif
         #if VK_EXT_debug_report
         || name == VK_EXT_DEBUG_REPORT_EXTENSION_NAME
+        #endif
+        #if VK_EXT_debug_utils
+        || name == VK_EXT_DEBUG_UTILS_EXTENSION_NAME
         #endif
     );
 }
