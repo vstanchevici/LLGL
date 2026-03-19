@@ -11,7 +11,7 @@ layout(location = 0) out vec2 vTexCoord;
 
 void main()
 {
-    uint id = gl_VertexID;
+    int id = gl_VertexID;
 	gl_Position = vec4(id == 2 ? 3.0 : -1.0, id == 0 ? 3.0 : -1.0, 1.0, 1.0);
 	vTexCoord = gl_Position.xy * vec2(0.5, -0.5) + 0.5;
 }

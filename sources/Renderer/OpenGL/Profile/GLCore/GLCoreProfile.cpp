@@ -23,11 +23,6 @@ int GetRendererID()
     return RendererID::OpenGL;
 }
 
-const char* GetModuleName()
-{
-    return "OpenGL";
-}
-
 const char* GetRendererName()
 {
     return "OpenGL Core";
@@ -100,6 +95,11 @@ void UnmapBuffer(GLenum target)
 void DrawBuffer(GLenum buf)
 {
     glDrawBuffer(buf);
+}
+
+void TexParameterSwizzleRGBA(GLenum target, const GLint params[4])
+{
+    glTexParameteriv(target, GL_TEXTURE_SWIZZLE_RGBA, params);
 }
 
 void FramebufferTexture1D(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level)

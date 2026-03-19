@@ -24,11 +24,6 @@ int GetRendererID()
     return RendererID::OpenGLES;
 }
 
-const char* GetModuleName()
-{
-    return "OpenGLES3";
-}
-
 const char* GetRendererName()
 {
     return "OpenGL ES 3";
@@ -132,6 +127,14 @@ void DrawBuffer(GLenum buf)
     }
     else
         glDrawBuffers(1, &buf);
+}
+
+void TexParameterSwizzleRGBA(GLenum target, const GLint params[4])
+{
+    glTexParameteri(target, GL_TEXTURE_SWIZZLE_R, params[0]);
+    glTexParameteri(target, GL_TEXTURE_SWIZZLE_G, params[1]);
+    glTexParameteri(target, GL_TEXTURE_SWIZZLE_B, params[2]);
+    glTexParameteri(target, GL_TEXTURE_SWIZZLE_A, params[3]);
 }
 
 void FramebufferTexture1D(GLenum /*target*/, GLenum /*attachment*/, GLenum /*textarget*/, GLuint /*texture*/, GLint /*level*/)

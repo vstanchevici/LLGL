@@ -19,15 +19,22 @@
 * Global helper functions
 */
 
-std::vector<TexturedVertex> LoadObjModel(const std::string& filename)
+std::vector<TexturedVertex> LoadObjModel(const std::string& filename, unsigned verticesPerFace, bool keepRightHandedCoordinates)
 {
     std::vector<TexturedVertex> vertices;
-    LoadObjModel(vertices, filename);
+    LoadObjModel(vertices, filename, verticesPerFace, keepRightHandedCoordinates);
     return vertices;
 }
 
-TriangleMesh LoadObjModel(std::vector<TexturedVertex>& vertices, const std::string& filename, unsigned verticesPerFace)
+static Gs::Vector3f ToLeftHanded(const Gs::Vector3f& v)
 {
+    return { v.x, v.y, -v.z };
+}
+
+TriangleMesh LoadObjModel(std::vector<TexturedVertex>& vertices, const std::string& filename, unsigned verticesPerFace, bool keepRightHandedCoordinates)
+{
+    LLGL_VERIFY(verticesPerFace <= 4);
+
     // Read obj file
     std::vector<char> fileContent = ReadAsset(filename);
     if (fileContent.empty())
@@ -61,7 +68,7 @@ TriangleMesh LoadObjModel(std::vector<TexturedVertex>& vertices, const std::stri
             s >> v.x;
             s >> v.y;
             s >> v.z;
-            coords.push_back(v);
+            coords.push_back(keepRightHandedCoordinates ? v : ToLeftHanded(v));
         }
         else if (mode == "vt")
         {
@@ -76,16 +83,16 @@ TriangleMesh LoadObjModel(std::vector<TexturedVertex>& vertices, const std::stri
             s >> n.x;
             s >> n.y;
             s >> n.z;
-            normals.push_back(n);
+            normals.push_back(keepRightHandedCoordinates ? n : ToLeftHanded(n));
         }
         else if (mode == "f")
         {
-            unsigned int v = 0, vt = 0, vn = 0;
+            unsigned int v[4] = {}, vt[4] = {}, vn[4] = {};
 
             for (unsigned i = 0; i < verticesPerFace; ++i)
             {
                 // Read vertex index
-                s >> v;
+                s >> v[i];
 
                 // Read texture-coordinate index
                 if (texCoords.empty())
@@ -93,35 +100,46 @@ TriangleMesh LoadObjModel(std::vector<TexturedVertex>& vertices, const std::stri
                 else
                 {
                     s.ignore(1);
-                    s >> vt;
+                    s >> vt[i];
                     s.ignore(1);
                 }
 
                 // Read normal index
-                s >> vn;
+                s >> vn[i];
+            }
 
-                // Add vertex to mesh
+            // Add vertices to mesh.
+            // Wavefront Object format stores triangle indices in counter-clockwise (CCW) order.
+            // Since LLGL::RasterizerDescriptor::frontCCW is disabled by default, we convert it to clockwise (CW) order here.
+            for (unsigned i = 0; i < verticesPerFace; ++i)
+            {
+                unsigned iface = verticesPerFace - i - 1;
+                unsigned iv = v[iface] - 1;
+                unsigned in = vn[iface] - 1;
+                unsigned it = vt[iface] - 1;
+
                 vertices.push_back(
                     {
-                        coords[v - 1],
-                        (vn - 1 < normals.size() ? normals[vn - 1] : Gs::Vector3f{}),
-                        (vt - 1 < texCoords.size() ? texCoords[vt - 1] : Gs::Vector2f{})
+                        coords[iv],
+                        (in < normals.size() ? normals[in] : Gs::Vector3f{}),
+                        (it < texCoords.size() ? texCoords[it] : Gs::Vector2f{})
                     }
                 );
-                mesh.numVertices++;
             }
+            mesh.numVertices += verticesPerFace;
         }
     }
 
     return mesh;
 }
 
-std::vector<Gs::Vector3f> GenerateCubeVertices()
+std::vector<Gs::Vector3f> GenerateCubeVertices(bool isRightHanded)
 {
+    const float z = (isRightHanded ? -1.0f : +1.0f);
     return
     {
-        { -1, -1, -1 }, { -1,  1, -1 }, {  1,  1, -1 }, {  1, -1, -1 },
-        { -1, -1,  1 }, { -1,  1,  1 }, {  1,  1,  1 }, {  1, -1,  1 },
+        { -1, -1, -z }, { -1,  1, -z }, {  1,  1, -z }, {  1, -1, -z },
+        { -1, -1,  z }, { -1,  1,  z }, {  1,  1,  z }, {  1, -1,  z },
     };
 }
 
@@ -138,46 +156,47 @@ std::vector<std::uint32_t> GenerateCubeTriangleIndices()
     };
 }
 
-std::vector<TexturedVertex> GenerateTexturedCubeVertices()
+std::vector<TexturedVertex> GenerateTexturedCubeVertices(bool isRightHanded)
 {
+    const float z = (isRightHanded ? -1.0f : +1.0f);
     return
     {
         //   x   y   z      nx  ny  nz      u  v
         // front
-        { { -1, -1, -1 }, {  0,  0, -1 }, { 0, 1 } },
-        { { -1,  1, -1 }, {  0,  0, -1 }, { 0, 0 } },
-        { {  1,  1, -1 }, {  0,  0, -1 }, { 1, 0 } },
-        { {  1, -1, -1 }, {  0,  0, -1 }, { 1, 1 } },
+        { { -1, -1, -z }, {  0,  0, -z }, { 0, 1 } },
+        { { -1,  1, -z }, {  0,  0, -z }, { 0, 0 } },
+        { {  1,  1, -z }, {  0,  0, -z }, { 1, 0 } },
+        { {  1, -1, -z }, {  0,  0, -z }, { 1, 1 } },
 
         // right
-        { {  1, -1, -1 }, { +1,  0,  0 }, { 0, 1 } },
-        { {  1,  1, -1 }, { +1,  0,  0 }, { 0, 0 } },
-        { {  1,  1,  1 }, { +1,  0,  0 }, { 1, 0 } },
-        { {  1, -1,  1 }, { +1,  0,  0 }, { 1, 1 } },
+        { {  1, -1, -z }, { +1,  0,  0 }, { 0, 1 } },
+        { {  1,  1, -z }, { +1,  0,  0 }, { 0, 0 } },
+        { {  1,  1,  z }, { +1,  0,  0 }, { 1, 0 } },
+        { {  1, -1,  z }, { +1,  0,  0 }, { 1, 1 } },
 
         // left
-        { { -1, -1,  1 }, { -1,  0,  0 }, { 0, 1 } },
-        { { -1,  1,  1 }, { -1,  0,  0 }, { 0, 0 } },
-        { { -1,  1, -1 }, { -1,  0,  0 }, { 1, 0 } },
-        { { -1, -1, -1 }, { -1,  0,  0 }, { 1, 1 } },
+        { { -1, -1,  z }, { -1,  0,  0 }, { 0, 1 } },
+        { { -1,  1,  z }, { -1,  0,  0 }, { 0, 0 } },
+        { { -1,  1, -z }, { -1,  0,  0 }, { 1, 0 } },
+        { { -1, -1, -z }, { -1,  0,  0 }, { 1, 1 } },
 
         // top
-        { { -1,  1, -1 }, {  0, +1,  0 }, { 0, 1 } },
-        { { -1,  1,  1 }, {  0, +1,  0 }, { 0, 0 } },
-        { {  1,  1,  1 }, {  0, +1,  0 }, { 1, 0 } },
-        { {  1,  1, -1 }, {  0, +1,  0 }, { 1, 1 } },
+        { { -1,  1, -z }, {  0, +1,  0 }, { 0, 1 } },
+        { { -1,  1,  z }, {  0, +1,  0 }, { 0, 0 } },
+        { {  1,  1,  z }, {  0, +1,  0 }, { 1, 0 } },
+        { {  1,  1, -z }, {  0, +1,  0 }, { 1, 1 } },
 
         // bottom
-        { { -1, -1,  1 }, {  0, -1,  0 }, { 0, 1 } },
-        { { -1, -1, -1 }, {  0, -1,  0 }, { 0, 0 } },
-        { {  1, -1, -1 }, {  0, -1,  0 }, { 1, 0 } },
-        { {  1, -1,  1 }, {  0, -1,  0 }, { 1, 1 } },
+        { { -1, -1,  z }, {  0, -1,  0 }, { 0, 1 } },
+        { { -1, -1, -z }, {  0, -1,  0 }, { 0, 0 } },
+        { {  1, -1, -z }, {  0, -1,  0 }, { 1, 0 } },
+        { {  1, -1,  z }, {  0, -1,  0 }, { 1, 1 } },
 
         // back
-        { {  1, -1,  1 }, {  0,  0, +1 }, { 0, 1 } },
-        { {  1,  1,  1 }, {  0,  0, +1 }, { 0, 0 } },
-        { { -1,  1,  1 }, {  0,  0, +1 }, { 1, 0 } },
-        { { -1, -1,  1 }, {  0,  0, +1 }, { 1, 1 } },
+        { {  1, -1,  z }, {  0,  0, +z }, { 0, 1 } },
+        { {  1,  1,  z }, {  0,  0, +z }, { 0, 0 } },
+        { { -1,  1,  z }, {  0,  0, +z }, { 1, 0 } },
+        { { -1, -1,  z }, {  0,  0, +z }, { 1, 1 } },
     };
 }
 

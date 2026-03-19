@@ -29,7 +29,7 @@ DEF_TEST( DualSourceBlending )
     if (shaders[VSDualSourceBlend] == nullptr || shaders[PSDualSourceBlend] == nullptr)
         return TestResult::Skipped;
 
-    // Create all blend states
+    // Create PSO for dual-source blending
     PipelineLayout* psoLayout = renderer->CreatePipelineLayout(
         Parse(
             HasCombinedSamplers()
@@ -58,7 +58,7 @@ DEF_TEST( DualSourceBlending )
     // Render scene
     Texture* readbackTex = nullptr;
 
-    cmdBuffer->Begin();
+    BEGIN();
     {
         cmdBuffer->SetVertexBuffer(*meshBuffer); // Dummy vertex buffer
 
@@ -81,7 +81,7 @@ DEF_TEST( DualSourceBlending )
         }
         cmdBuffer->EndRenderPass();
     }
-    cmdBuffer->End();
+    END();
 
     // Match entire color buffer and create delta heat map
     const char* colorBufferName = "DualSourceBlend";

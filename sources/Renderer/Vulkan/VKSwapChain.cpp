@@ -53,6 +53,8 @@ static VKPtr<VkFence> NullVkFence(VkDevice device)
     return VKPtr<VkFence>{ device, vkDestroyFence };
 }
 
+#define INIT_PER_FRAME(EXPR) EXPR, EXPR, EXPR
+
 VKSwapChain::VKSwapChain(
     VkInstance                      instance,
     VkPhysicalDevice                physicalDevice,
@@ -62,26 +64,20 @@ VKSwapChain::VKSwapChain(
     const std::shared_ptr<Surface>& surface,
     const RendererInfo&             rendererInfo)
 :
-    SwapChain                { desc                            },
-    instance_                { instance                        },
-    physicalDevice_          { physicalDevice                  },
-    device_                  { device                          },
-    deviceMemoryMngr_        { deviceMemoryMngr                },
-    surface_                 { instance, vkDestroySurfaceKHR   },
-    swapChain_               { device, vkDestroySwapchainKHR   },
-    swapChainRenderPass_     { device                          },
-    swapChainSamples_        { GetClampedSamples(desc.samples) },
-    secondaryRenderPass_     { device                          },
-    depthStencilBuffer_      { device                          },
-    imageAvailableSemaphore_ { NullVkSemaphore(device_),
-                               NullVkSemaphore(device_),
-                               NullVkSemaphore(device_)        },
-    renderFinishedSemaphore_ { NullVkSemaphore(device_),
-                               NullVkSemaphore(device_),
-                               NullVkSemaphore(device_)        },
-    inFlightFences_          { NullVkFence(device_),
-                               NullVkFence(device_),
-                               NullVkFence(device_)            }
+    SwapChain                { desc                                      },
+    instance_                { instance                                  },
+    physicalDevice_          { physicalDevice                            },
+    device_                  { device                                    },
+    deviceMemoryMngr_        { deviceMemoryMngr                          },
+    surface_                 { instance, vkDestroySurfaceKHR             },
+    swapChain_               { device, vkDestroySwapchainKHR             },
+    swapChainRenderPass_     { device                                    },
+    swapChainSamples_        { GetClampedSamples(desc.samples)           },
+    secondaryRenderPass_     { device                                    },
+    depthStencilBuffer_      { device                                    },
+    imageAvailableSemaphore_ { INIT_PER_FRAME(NullVkSemaphore(device_))  },
+    renderFinishedSemaphore_ { INIT_PER_FRAME(NullVkSemaphore(device_))  },
+    inFlightFences_          { INIT_PER_FRAME(NullVkFence(device_))      }
 {
     SetOrCreateSurface(surface, SwapChain::BuildDefaultSurfaceTitle(rendererInfo), desc);
 
@@ -100,6 +96,8 @@ VKSwapChain::VKSwapChain(
     if (!surface)
         ShowSurface();
 }
+
+#undef INIT_PER_FRAME
 
 bool VKSwapChain::IsPresentable() const
 {
@@ -212,28 +210,6 @@ bool VKSwapChain::HasMultiSampling() const
     return (swapChainSamples_ > 1);
 }
 
-template <typename TDst>
-void CopyVkImageRegion(TDst& outRegion, const TextureRegion& dstRegion, const Offset2D& srcOffset, VkImageAspectFlags aspectFlags)
-{
-    outRegion.srcSubresource.aspectMask     = aspectFlags;
-    outRegion.srcSubresource.mipLevel       = 0;
-    outRegion.srcSubresource.baseArrayLayer = 0;
-    outRegion.srcSubresource.layerCount     = 1u;
-    outRegion.srcOffset.x                   = srcOffset.x;
-    outRegion.srcOffset.y                   = srcOffset.y;
-    outRegion.srcOffset.z                   = 0;
-    outRegion.dstSubresource.aspectMask     = aspectFlags;
-    outRegion.dstSubresource.mipLevel       = dstRegion.subresource.baseMipLevel;
-    outRegion.dstSubresource.baseArrayLayer = dstRegion.subresource.baseArrayLayer;
-    outRegion.dstSubresource.layerCount     = 1u;
-    outRegion.dstOffset.x                   = dstRegion.offset.x;
-    outRegion.dstOffset.y                   = dstRegion.offset.y;
-    outRegion.dstOffset.z                   = dstRegion.offset.z;
-    outRegion.extent.width                  = dstRegion.extent.width;
-    outRegion.extent.height                 = dstRegion.extent.height;
-    outRegion.extent.depth                  = 1u;
-}
-
 void VKSwapChain::CopyImage(
     VKCommandContext&       context,
     VkImage                 dstImage,
@@ -249,7 +225,7 @@ void VKSwapChain::CopyImage(
     if (HasMultiSampling())
     {
         VkImageResolve resolveRegion;
-        CopyVkImageRegion(resolveRegion, dstRegion, srcOffset, aspectFlags);
+        VKImageUtils::InitVkImageRegion(resolveRegion, dstRegion, Offset3D{ srcOffset.x, srcOffset.y, 0 }, aspectFlags, aspectFlags);
 
         if (isDepthStencil)
         {
@@ -269,7 +245,7 @@ void VKSwapChain::CopyImage(
     else
     {
         VkImageCopy copyRegion;
-        CopyVkImageRegion(copyRegion, dstRegion, srcOffset, aspectFlags);
+        VKImageUtils::InitVkImageRegion(copyRegion, dstRegion, Offset3D{ srcOffset.x, srcOffset.y, 0 }, aspectFlags, aspectFlags);
 
         if (isDepthStencil)
         {
@@ -277,13 +253,13 @@ void VKSwapChain::CopyImage(
                 return /*No depth-stencil buffer*/;
 
             VkImage srcImage = depthStencilBuffer_.GetVkImage();
-            context.CopyImage(srcImage, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, dstImage, dstImageLayout, copyRegion, format);
+            context.CopyImage(srcImage, format, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, dstImage, format, dstImageLayout, copyRegion);
         }
         else
         {
             LLGL_ASSERT(srcColorBuffer < swapChainImages_.size());
             VkImage srcImage = swapChainImages_[srcColorBuffer];
-            context.CopyImage(srcImage, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, dstImage, dstImageLayout, copyRegion, format);
+            context.CopyImage(srcImage, format, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, dstImage, format, dstImageLayout, copyRegion);
         }
     }
 }
@@ -723,14 +699,14 @@ static std::vector<VkFormat> GetDepthStencilFormatPreference(int depthBits, int 
     if (stencilBits == 0)
     {
         if (depthBits == 32)
-            return { VK_FORMAT_D32_SFLOAT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM_S8_UINT, VK_FORMAT_D16_UNORM };
+            return { VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM };
     }
     else
     {
         if (depthBits == 32)
-            return { VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM_S8_UINT };
+            return { VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT };
     }
-    return { VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D16_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM };
+    return { VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_D32_SFLOAT, VK_FORMAT_D16_UNORM };
 }
 
 VkFormat VKSwapChain::PickDepthStencilFormat(int depthBits, int stencilBits) const

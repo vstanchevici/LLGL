@@ -19,6 +19,7 @@
 #include "Float16Compressor.h"
 #include "BCDecompressor.h"
 #include <LLGL/Utils/ForRange.h>
+#include <LLGL/Utils/TypeNames.h>
 
 
 namespace LLGL
@@ -520,80 +521,6 @@ static void WriteRGBAFormattedVariant(
     TransferRGBAFormattedVariantColor(dstFormat, dataType, dstBuffer, idx, value);
 }
 
-static void ReadDepthStencilValue(
-    ImageFormat srcFormat, DataType dataType, const VariantConstBuffer& srcBuffer, std::size_t idx, DepthStencilValue& value)
-{
-    if (srcFormat == ImageFormat::Depth && dataType == DataType::UInt16)
-    {
-        /* Read D16UNorm format: Decompress 16-bit float */
-        value.depth = DecompressFloat16(srcBuffer.uint16[idx]);
-    }
-    else if (srcFormat == ImageFormat::DepthStencil && dataType == DataType::UInt32)
-    {
-        /* Read D24UNormS8UInt format: Decompress 24-bit float and 8-bit unsigned integer */
-        value.depth   = static_cast<float>(srcBuffer.uint32[idx] & 0x00FFFFFFu) / static_cast<float>(0x00FFFFFFu);
-        value.stencil = srcBuffer.uint32[idx] >> 24;
-    }
-    else if (srcFormat == ImageFormat::Depth && dataType == DataType::Float32)
-    {
-        /* Read D32Float format: Copy 32-bit float */
-        value.depth = srcBuffer.real32[idx];
-    }
-    else if (srcFormat == ImageFormat::DepthStencil && dataType == DataType::Float32)
-    {
-        /* Read D32FloatS8X24UInt format: Copy 32-bit float and 8-bit unsigned integer */
-        value.depth   = srcBuffer.real32[idx*2];
-        value.stencil = srcBuffer.uint32[idx*2 + 1] >> 24;
-    }
-    else if (srcFormat == ImageFormat::Stencil && dataType == DataType::UInt8)
-    {
-        /* Read S8UInt format: Copy 8-bit unsigned integer */
-        value.stencil = srcBuffer.uint8[idx];
-    }
-    else if (srcFormat == ImageFormat::Stencil && dataType == DataType::UInt32)
-    {
-        /* Read S8X24UInt format: Copy 8-bit unsigned integer */
-        value.stencil = srcBuffer.uint32[idx] & 0xFF;
-    }
-}
-
-static void WriteDepthStencilValue(
-    ImageFormat dstFormat, DataType dataType, VariantBuffer& dstBuffer, std::size_t idx, const DepthStencilValue& value)
-{
-    if (dstFormat == ImageFormat::Depth && dataType == DataType::UInt16)
-    {
-        /* Write D16UNorm format: Compress 16-bit float */
-        dstBuffer.uint16[idx] = CompressFloat16(value.depth);
-    }
-    else if (dstFormat == ImageFormat::DepthStencil && dataType == DataType::UInt32)
-    {
-        /* Write D24UNormS8UInt format: Decompress 24-bit float and 8-bit unsigned integer */
-        const std::uint32_t depth24 = static_cast<std::uint32_t>(value.depth * static_cast<float>(0x00FFFFFFu));
-        dstBuffer.uint32[idx] = ((value.stencil & 0x000000FFu)) << 24 | (depth24 & 0x00FFFFFFu);
-    }
-    else if (dstFormat == ImageFormat::Depth && dataType == DataType::Float32)
-    {
-        /* Write D32Float format: Copy 32-bit float */
-        dstBuffer.real32[idx] = value.depth;
-    }
-    else if (dstFormat == ImageFormat::DepthStencil && dataType == DataType::Float32)
-    {
-        /* Read D32FloatS8X24UInt format: Copy 32-bit float and 8-bit unsigned integer */
-        dstBuffer.real32[idx*2]     = value.depth;
-        dstBuffer.uint32[idx*2 + 1] = (value.stencil & 0xFF) << 24;
-    }
-    else if (dstFormat == ImageFormat::Stencil && dataType == DataType::UInt8)
-    {
-        /* Write S8UInt format: Copy 8-bit unsigned integer */
-        dstBuffer.uint8[idx] = value.stencil & 0xFF;
-    }
-    else if (dstFormat == ImageFormat::Stencil && dataType == DataType::UInt32)
-    {
-        /* Write S8X24UInt format: Copy 8-bit unsigned integer */
-        dstBuffer.uint32[idx] = value.stencil;
-    }
-}
-
 // Worker thread procedure for the "ConvertImageBufferFormat" function
 static void ConvertImageBufferFormatWorker(
     const ImageView&                srcImageView,
@@ -610,44 +537,24 @@ static void ConvertImageBufferFormatWorker(
 
     const std::uint32_t layerSize = extent.width * extent.height;
 
-    if (IsDepthOrStencilFormat(srcImageView.format))
+    /* Initialize default variant color (0, 0, 0, 1) */
+    VariantColor colorValue{ UninitializeTag{} };
+
+    SetVariantMinMax(srcImageView.dataType, colorValue.r, true);
+    SetVariantMinMax(srcImageView.dataType, colorValue.g, true);
+    SetVariantMinMax(srcImageView.dataType, colorValue.b, true);
+    SetVariantMinMax(srcImageView.dataType, colorValue.a, false);
+
+    for_subrange(i, begin, end)
     {
-        /* Initialize default depth-stencil value (0, 0) */
-        DepthStencilValue depthStencilValue{ 0.0f, 0u };
+        /* Apply source and destination stride when passing an edge */
+        AdvancePaddingOffsetAtEdge(srcBuffer, dstBuffer, i, begin, memoryInfo, extent.width, layerSize);
 
-        for_subrange(i, begin, end)
-        {
-            /* Apply source and destination stride when passing an edge */
-            AdvancePaddingOffsetAtEdge(srcBuffer, dstBuffer, i, begin, memoryInfo, extent.width, layerSize);
+        /* Read RGBA variant from source buffer */
+        ReadRGBAFormattedVariant(srcImageView.format, srcImageView.dataType, srcBuffer, i, colorValue);
 
-            /* Read depth-stencil value from source buffer */
-            ReadDepthStencilValue(srcImageView.format, srcImageView.dataType, srcBuffer, i, depthStencilValue);
-
-            /* Write depth-stencil value to destination buffer */
-            WriteDepthStencilValue(dstImageView.format, dstImageView.dataType, dstBuffer, i, depthStencilValue);
-        }
-    }
-    else
-    {
-        /* Initialize default variant color (0, 0, 0, 1) */
-        VariantColor colorValue{ UninitializeTag{} };
-
-        SetVariantMinMax(srcImageView.dataType, colorValue.r, true);
-        SetVariantMinMax(srcImageView.dataType, colorValue.g, true);
-        SetVariantMinMax(srcImageView.dataType, colorValue.b, true);
-        SetVariantMinMax(srcImageView.dataType, colorValue.a, false);
-
-        for_subrange(i, begin, end)
-        {
-            /* Apply source and destination stride when passing an edge */
-            AdvancePaddingOffsetAtEdge(srcBuffer, dstBuffer, i, begin, memoryInfo, extent.width, layerSize);
-
-            /* Read RGBA variant from source buffer */
-            ReadRGBAFormattedVariant(srcImageView.format, srcImageView.dataType, srcBuffer, i, colorValue);
-
-            /* Write RGBA variant to destination buffer */
-            WriteRGBAFormattedVariant(dstImageView.format, dstImageView.dataType, dstBuffer, i, colorValue);
-        }
+        /* Write RGBA variant to destination buffer */
+        WriteRGBAFormattedVariant(dstImageView.format, dstImageView.dataType, dstBuffer, i, colorValue);
     }
 }
 
@@ -657,7 +564,7 @@ static std::size_t ConvertImageBufferFormat(
     const Extent3D&         extent,
     unsigned                threadCount)
 {
-    LLGL_ASSERT(IsDepthOrStencilFormat(srcImageView.format) || srcImageView.dataType == dstImageView.dataType);
+    LLGL_ASSERT(srcImageView.dataType == dstImageView.dataType);
 
     /* Validate destination buffer size */
     const std::size_t numPixels = extent.width * extent.height * extent.depth;
@@ -689,6 +596,197 @@ static std::size_t ConvertImageBufferFormat(
     return memoryInfo.dstImageSize;
 }
 
+static float UnpackD24UNorm(std::uint32_t value)
+{
+    return (static_cast<float>(value) / static_cast<float>(0x00FFFFFFu));
+}
+
+static void ReadDepthStencilValue(
+    ImageFormat srcFormat, DataType dataType, const VariantConstBuffer& srcBuffer, std::size_t idx, DepthStencilValue& value)
+{
+    if (srcFormat == ImageFormat::Depth && dataType == DataType::UInt16)
+    {
+        /* Read D16UNorm format: Decode 16-bit unsigned normalized depth */
+        value.depth = static_cast<float>(srcBuffer.uint16[idx]) / static_cast<float>(0x0000FFFFu);
+    }
+    else if (srcFormat == ImageFormat::Depth && dataType == DataType::Float16)
+    {
+        /* Read R16Float format: Decompress 16-bit float */
+        value.depth = DecompressFloat16(srcBuffer.uint16[idx]);
+    }
+    else if (srcFormat == ImageFormat::Depth && dataType == DataType::Float32)
+    {
+        /* Read D32Float format: Copy 32-bit float */
+        value.depth = srcBuffer.real32[idx];
+    }
+    else if (srcFormat == ImageFormat::DepthStencil && dataType == DataType::UInt32)
+    {
+        /* Read D24UNormS8UInt format: Decode 24-bit unsigned normalized depth and 8-bit unsigned stencil */
+        value.depth   = UnpackD24UNorm(srcBuffer.uint32[idx] & 0x00FFFFFF);
+        value.stencil = (srcBuffer.uint32[idx] >> 24);
+    }
+    else if (srcFormat == ImageFormat::DepthStencil && dataType == DataType::Float32)
+    {
+        /* Read D32FloatS8X24UInt format: Copy 32-bit float and 8-bit unsigned integer */
+        value.depth   = srcBuffer.real32[idx*2];
+        value.stencil = srcBuffer.uint32[idx*2 + 1] >> 24;
+    }
+    else if (srcFormat == ImageFormat::Stencil && dataType == DataType::UInt8)
+    {
+        /* Read S8UInt format: Copy 8-bit unsigned integer */
+        value.stencil = srcBuffer.uint8[idx];
+    }
+    else if (srcFormat == ImageFormat::Stencil && dataType == DataType::UInt32)
+    {
+        /* Read S8X24UInt format: Copy 8-bit unsigned integer */
+        value.stencil = srcBuffer.uint32[idx] & 0xFF;
+    }
+}
+
+static std::uint32_t PackD24UNorm(float value)
+{
+    return static_cast<std::uint32_t>(value * static_cast<float>(0x00FFFFFFu));
+}
+
+static void WriteDepthStencilValue(
+    ImageFormat dstFormat, DataType dataType, VariantBuffer& dstBuffer, std::size_t idx, const DepthStencilValue& value)
+{
+    if (dstFormat == ImageFormat::Depth && dataType == DataType::UInt16)
+    {
+        /* Write D16UNorm format: Encode 16-bit unsigned normalized depth */
+        dstBuffer.uint16[idx] = static_cast<std::uint16_t>(value.depth * static_cast<float>(0x0000FFFFu));
+    }
+    else if (dstFormat == ImageFormat::Depth && dataType == DataType::Float16)
+    {
+        /* Write R16Float format: Compress 16-bit float */
+        dstBuffer.uint16[idx] = CompressFloat16(value.depth);
+    }
+    else if (dstFormat == ImageFormat::Depth && dataType == DataType::Float32)
+    {
+        /* Write D32Float format: Copy 32-bit float */
+        dstBuffer.real32[idx] = value.depth;
+    }
+    else if (dstFormat == ImageFormat::DepthStencil && dataType == DataType::UInt32)
+    {
+        /* Write D24UNormS8UInt format: Encode 24-bit unsigned normalized depth and 8-bit unsigned stencil */
+        dstBuffer.uint32[idx] = (value.stencil << 24) | (PackD24UNorm(value.depth) & 0x00FFFFFF);
+    }
+    else if (dstFormat == ImageFormat::DepthStencil && dataType == DataType::Float32)
+    {
+        /* Read D32FloatS8X24UInt format: Copy 32-bit float and 8-bit unsigned integer */
+        dstBuffer.real32[idx*2]     = value.depth;
+        dstBuffer.uint32[idx*2 + 1] = (value.stencil & 0xFF) << 24;
+    }
+    else if (dstFormat == ImageFormat::Stencil && dataType == DataType::UInt8)
+    {
+        /* Write S8UInt format: Copy 8-bit unsigned integer */
+        dstBuffer.uint8[idx] = value.stencil & 0xFF;
+    }
+    else if (dstFormat == ImageFormat::Stencil && dataType == DataType::UInt32)
+    {
+        /* Write S8X24UInt format: Copy 8-bit unsigned integer */
+        dstBuffer.uint32[idx] = value.stencil;
+    }
+}
+
+static float UInt32AsFloat32(std::uint32_t value)
+{
+    return *reinterpret_cast<const float*>(&value);
+}
+
+static std::uint32_t Float32AsUInt32(float value)
+{
+    return *reinterpret_cast<const std::uint32_t*>(&value);
+}
+
+static void MergeDepthStencilValues(
+    DepthStencilValue& dst, const DepthStencilValue& src, std::uint32_t srcDepthMask, std::uint32_t srcStencilMask)
+{
+    dst.depth   = UInt32AsFloat32((Float32AsUInt32(dst.depth) & ~srcDepthMask) | (Float32AsUInt32(src.depth) & srcDepthMask));
+    dst.stencil = (dst.stencil & ~srcStencilMask) | (src.stencil & srcStencilMask);
+}
+
+// Worker thread procedure for the "ConvertDepthStencilImageBufferFormat" function
+static void ConvertDepthStencilImageBufferFormatWorker(
+    const ImageView&                srcImageView,
+    const MutableImageView&         dstImageView,
+    const ImageOperationMemoryInfo& memoryInfo,
+    const Extent3D&                 extent,
+    std::uint32_t                   depthMask,
+    std::uint32_t                   stencilMask,
+    std::size_t                     begin,
+    std::size_t                     end)
+{
+    VariantConstBuffer  srcBuffer = srcImageView.data;
+    VariantBuffer       dstBuffer = dstImageView.data;
+
+    ApplyPaddingOffset(srcBuffer, dstBuffer, begin, memoryInfo, extent);
+
+    const std::uint32_t layerSize = extent.width * extent.height;
+
+    /* Initialize default depth-stencil value (0, 0) */
+    DepthStencilValue depthStencilValueSrc{ 0.0f, 0u };
+    DepthStencilValue depthStencilValueDst{ 0.0f, 0u };
+
+    for_subrange(i, begin, end)
+    {
+        /* Apply source and destination stride when passing an edge */
+        AdvancePaddingOffsetAtEdge(srcBuffer, dstBuffer, i, begin, memoryInfo, extent.width, layerSize);
+
+        /* Read depth-stencil value from source buffer */
+        ReadDepthStencilValue(srcImageView.format, srcImageView.dataType, srcBuffer, i, depthStencilValueSrc);
+        ReadDepthStencilValue(dstImageView.format, dstImageView.dataType, VariantConstBuffer{ dstBuffer.uint8 }, i, depthStencilValueDst);
+
+        /* Apply masking */
+        MergeDepthStencilValues(depthStencilValueDst, depthStencilValueSrc, depthMask, stencilMask);
+
+        /* Write depth-stencil value to destination buffer */
+        WriteDepthStencilValue(dstImageView.format, dstImageView.dataType, dstBuffer, i, depthStencilValueDst);
+    }
+}
+
+static std::size_t ConvertDepthStencilImageBufferFormat(
+    const ImageView&        srcImageView,
+    const MutableImageView& dstImageView,
+    const Extent3D&         extent,
+    std::uint32_t           depthMask,
+    std::uint32_t           stencilMask,
+    unsigned                threadCount)
+{
+    LLGL_ASSERT(IsDepthOrStencilFormat(srcImageView.format));
+
+    /* Validate destination buffer size */
+    const std::size_t numPixels = extent.width * extent.height * extent.depth;
+
+    ImageOperationMemoryInfo memoryInfo = {};
+    GetImageOperationMemoryInfo(memoryInfo, srcImageView, dstImageView, extent);
+
+    LLGL_ASSERT(
+        dstImageView.dataSize >= memoryInfo.dstImageSize,
+        "destination image buffer is too small to convert image format; expected %zu, but %zu was specified",
+        memoryInfo.dstImageSize, dstImageView.dataSize
+    );
+
+    /* Get variant buffer for source and destination images */
+    DoConcurrentRange(
+        std::bind(
+            ConvertDepthStencilImageBufferFormatWorker,
+            std::cref(srcImageView),
+            std::cref(dstImageView),
+            std::cref(memoryInfo),
+            std::cref(extent),
+            depthMask,
+            stencilMask,
+            std::placeholders::_1,
+            std::placeholders::_2
+        ),
+        numPixels,
+        threadCount
+    );
+
+    return memoryInfo.dstImageSize;
+}
+
 static void ValidateSourceImageView(const ImageView& imageView)
 {
     LLGL_ASSERT_PTR(imageView.data);
@@ -702,7 +800,11 @@ static void ValidateDestinationImageView(const MutableImageView& imageView)
     LLGL_ASSERT_PTR(imageView.data);
     const std::size_t dataTypeSize = GetMemoryFootprint(imageView.format, imageView.dataType, 1);
     LLGL_ASSERT(dataTypeSize > 0, "destination image data type size must be greater than zero");
-    LLGL_ASSERT(imageView.dataSize % dataTypeSize == 0, "destination image data size is not a multiple of the source data type size");
+    LLGL_ASSERT(
+        imageView.dataSize % dataTypeSize == 0,
+        "destination image data size (%zu) is not a multiple of the source data type size (%zu)",
+        imageView.dataSize, dataTypeSize
+    );
 }
 
 static void ValidateImageConversionParams(
@@ -710,12 +812,21 @@ static void ValidateImageConversionParams(
     ImageFormat         dstFormat,
     DataType            dstDataType)
 {
-    if (srcImageView.format == ImageFormat::Compressed || dstFormat == ImageFormat::Compressed)
-        LLGL_TRAP("cannot convert compressed image formats");
-    if (IsDepthOrStencilFormat(srcImageView.format) != IsDepthOrStencilFormat(dstFormat))
-        LLGL_TRAP("cannot convert between depth-stencil and non-depth-stencil image formats");
-    if (dstDataType < DataType::Int8 || dstDataType > DataType::Float64)
-        LLGL_TRAP("invalid value for destination data type: 0x%08X", static_cast<unsigned>(dstDataType));
+    LLGL_ASSERT(
+        srcImageView.format != ImageFormat::Compressed && dstFormat != ImageFormat::Compressed,
+        "cannot convert compressed image formats: from %s to %s",
+        ToString(srcImageView.format), ToString(dstFormat)
+    );
+    LLGL_ASSERT(
+        IsDepthOrStencilFormat(srcImageView.format) == IsDepthOrStencilFormat(dstFormat),
+        "cannot convert between depth-stencil and non-depth-stencil image formats: %s vs %s",
+        ToString(srcImageView.format), ToString(dstFormat)
+    );
+    LLGL_ASSERT(
+        dstDataType >= DataType::Int8 && dstDataType <= DataType::Float64,
+        "invalid value for destination data type: 0x%08X",
+        static_cast<unsigned>(dstDataType)
+    );
 }
 
 
@@ -726,7 +837,9 @@ LLGL_EXPORT std::size_t ConvertImageBuffer(
     const MutableImageView& dstImageView,
     const Extent3D&         extent,
     unsigned                threadCount,
-    bool                    copyUnchangedImage)
+    bool                    copyUnchangedImage,
+    std::uint32_t           depthMask,
+    std::uint32_t           stencilMask)
 {
     /* Validate input parameters */
     ValidateSourceImageView(srcImageView);
@@ -736,7 +849,7 @@ LLGL_EXPORT std::size_t ConvertImageBuffer(
     if (IsDepthOrStencilFormat(srcImageView.format))
     {
         /* Convert depth-stencil image format */
-        return ConvertImageBufferFormat(srcImageView, dstImageView, extent, threadCount);
+        return ConvertDepthStencilImageBufferFormat(srcImageView, dstImageView, extent, depthMask, stencilMask, threadCount);
     }
     else if (srcImageView.dataType != dstImageView.dataType && srcImageView.format != dstImageView.format)
     {

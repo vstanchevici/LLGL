@@ -20,7 +20,7 @@
 
 
 static const char* k_defaultOutputDir       = "Output/";
-static const char* k_knownSingleCharArgs    = "bcdfghpstv";
+static const char* k_knownSingleCharArgs    = "bcdfghpstvi";
 
 // Returns true of the specified list of program arguments contains the search string
 bool HasProgramArgument(int argc, char* argv[], const char* search, const char** outValue)
@@ -149,6 +149,7 @@ static constexpr std::uint32_t g_testbedWinSize[2] = { 800, 600 };
 
 TestbedContext::TestbedContext(const char* moduleName, int version, int argc, char* argv[]) :
     moduleName    { moduleName                               },
+    textureDir    { "../Media/Textures/"                     },
     opt           { TestbedContext::ParseOptions(argc, argv) },
     reportHandle_ { Log::RegisterCallbackReport(report_)     }
 {
@@ -157,6 +158,7 @@ TestbedContext::TestbedContext(const char* moduleName, int version, int argc, ch
     const bool  isDebugMode             = (HasProgramArgument(argc, argv, "-d", &debugValue) || HasProgramArgument(argc, argv, "--debug", &debugValue));
     const bool  isBreakOnError          = (HasProgramArgument(argc, argv, "-b") || HasProgramArgument(argc, argv, "--break"));
     const bool  isRefMode               = HasProgramArgument(argc, argv, "--ref");
+    const bool  isImmediateContext      = (HasProgramArgument(argc, argv, "-i") || HasProgramArgument(argc, argv, "--icontext"));
     const bool  isCpuAndGpuDebugMode    = (*debugValue == '\0' || ::strcmp(debugValue, "gpu+cpu") == 0 || ::strcmp(debugValue, "cpu+gpu") == 0);
     const bool  isCpuDebugMode          = (isCpuAndGpuDebugMode || ::strcmp(debugValue, "cpu") == 0);
     const bool  isGpuDebugMode          = (isCpuAndGpuDebugMode || ::strcmp(debugValue, "gpu") == 0);
@@ -221,12 +223,12 @@ TestbedContext::TestbedContext(const char* moduleName, int version, int argc, ch
         cmdQueue = renderer->GetCommandQueue();
 
         // Create primary command buffer
-        cmdBuffer = renderer->CreateCommandBuffer(CommandBufferFlags::ImmediateSubmit);
+        cmdBuffer = renderer->CreateCommandBuffer(isImmediateContext ? CommandBufferFlags::ImmediateSubmit : 0);
 
         // Print renderer information
         rendererInfo = renderer->GetRendererInfo();
         if (opt.verbose)
-            LogRendererInfo();
+            LogRendererInfo(isImmediateContext);
 
         // Query rendering capabilities
         caps = renderer->GetRenderingCaps();
@@ -237,7 +239,7 @@ TestbedContext::TestbedContext(const char* moduleName, int version, int argc, ch
         if (!LoadShaders())
             ++failures;
         CreatePipelineLayouts();
-        if (!LoadTextures())
+        if (!LoadDefaultTextures())
             ++failures;
         CreateSamplerStates();
         LoadDefaultProjectionMatrix();
@@ -411,6 +413,7 @@ unsigned TestbedContext::RunAllTests()
     RUN_TEST( VertexBuffer                );
     RUN_TEST( BlendStates                 );
     RUN_TEST( DualSourceBlending          );
+    RUN_TEST( AlphaOnlyTexture            );
     //RUN_TEST( CommandBufferMultiThreading ); //TODO: this must be rewritten as CommandBuffer constraints are violated in this test
     RUN_TEST( CommandBufferSecondary      );
     RUN_TEST( TriangleStripCutOff         );
@@ -974,7 +977,7 @@ double TestbedContext::ToMillisecs(std::uint64_t t0, std::uint64_t t1)
     return duration;
 }
 
-void TestbedContext::LogRendererInfo()
+void TestbedContext::LogRendererInfo(bool isImmediateContext)
 {
     const RendererInfo& info = rendererInfo;
     if (opt.verbose)
@@ -995,15 +998,26 @@ void TestbedContext::LogRendererInfo()
     else
         Log::Printf("Renderer: %s (%s)\n", info.rendererName.c_str(), info.deviceName.c_str());
 
+    const char* cmdBufferContextInfo = (isImmediateContext ? "Immediate Context" : "Deferred Context");
     if (renderer->GetRendererID() == LLGL::RendererID::OpenGL)
     {
         const bool hasDSAExtension = (std::find(info.extensionNames.begin(), info.extensionNames.end(), "GL_ARB_direct_state_access") != info.extensionNames.end());
         Log::Printf(
             "Configuration:\n"
             " - Profile: %s\n"
-            " - DSA extension: %s\n",
+            " - DSA extension: %s\n"
+            " - %s\n",
             renderer->GetName(),
-            (hasDSAExtension ? "Yes" : "No")
+            (hasDSAExtension ? "Yes" : "No"),
+            cmdBufferContextInfo
+        );
+    }
+    else
+    {
+        Log::Printf(
+            "Configuration:\n"
+            " - %s\n",
+            cmdBufferContextInfo
         );
     }
 }
@@ -1039,6 +1053,8 @@ bool TestbedContext::LoadShaders()
         shaders[PSUnprojected]      = LoadShaderFromFile("UnprojectedMesh.hlsl",       ShaderType::Fragment,        "PSMain",  "ps_5_0", nullptr, VertFmtUnprojected);
         shaders[VSDualSourceBlend]  = LoadShaderFromFile("DualSourceBlending.hlsl",    ShaderType::Vertex,          "VSMain",  "vs_5_0", nullptr, VertFmtEmpty);
         shaders[PSDualSourceBlend]  = LoadShaderFromFile("DualSourceBlending.hlsl",    ShaderType::Fragment,        "PSMain",  "ps_5_0", nullptr, VertFmtEmpty);
+        shaders[VSAlphaOnlyTexture] = LoadShaderFromFile("AlphaOnlyTexture.hlsl",      ShaderType::Vertex,          "VSMain",  "vs_5_0", nullptr, VertFmtEmpty);
+        shaders[PSAlphaOnlyTexture] = LoadShaderFromFile("AlphaOnlyTexture.hlsl",      ShaderType::Fragment,        "PSMain",  "ps_5_0", nullptr, VertFmtEmpty);
         shaders[VSShadowMap]        = LoadShaderFromFile("ShadowMapping.hlsl",         ShaderType::Vertex,          "VShadow", "vs_5_0");
         shaders[VSShadowedScene]    = LoadShaderFromFile("ShadowMapping.hlsl",         ShaderType::Vertex,          "VScene",  "vs_5_0");
         shaders[PSShadowedScene]    = LoadShaderFromFile("ShadowMapping.hlsl",         ShaderType::Fragment,        "PScene",  "ps_5_0");
@@ -1094,6 +1110,8 @@ bool TestbedContext::LoadShaders()
             shaders[VSDualSourceBlend] = LoadShaderFromFile("DualSourceBlending.420core.vert", ShaderType::Vertex,   nullptr, nullptr, nullptr, VertFmtEmpty);
             shaders[PSDualSourceBlend] = LoadShaderFromFile("DualSourceBlending.420core.frag", ShaderType::Fragment, nullptr, nullptr, nullptr, VertFmtEmpty);
         }
+        shaders[VSAlphaOnlyTexture] = LoadShaderFromFile("AlphaOnlyTexture.330core.vert",      ShaderType::Vertex,   nullptr, nullptr, nullptr, VertFmtEmpty);
+        shaders[PSAlphaOnlyTexture] = LoadShaderFromFile("AlphaOnlyTexture.330core.frag",      ShaderType::Fragment, nullptr, nullptr, nullptr, VertFmtEmpty);
         shaders[VSShadowMap]        = LoadShaderFromFile("ShadowMapping.VShadow.330core.vert", ShaderType::Vertex);
         shaders[VSShadowedScene]    = LoadShaderFromFile("ShadowMapping.VScene.330core.vert",  ShaderType::Vertex);
         shaders[PSShadowedScene]    = LoadShaderFromFile("ShadowMapping.PScene.330core.frag",  ShaderType::Fragment);
@@ -1139,6 +1157,8 @@ bool TestbedContext::LoadShaders()
         shaders[PSUnprojected]      = LoadShaderFromFile("UnprojectedMesh.metal",      ShaderType::Fragment, "PSMain",  "1.1", nullptr, VertFmtUnprojected);
         shaders[VSDualSourceBlend]  = LoadShaderFromFile("DualSourceBlending.metal",   ShaderType::Vertex,   "VSMain",  "1.2", nullptr, VertFmtEmpty);
         shaders[PSDualSourceBlend]  = LoadShaderFromFile("DualSourceBlending.metal",   ShaderType::Fragment, "PSMain",  "1.2", nullptr, VertFmtEmpty);
+        shaders[VSAlphaOnlyTexture] = LoadShaderFromFile("AlphaOnlyTexture.metal",     ShaderType::Vertex,   "VSMain",  "1.1", nullptr, VertFmtEmpty);
+        shaders[PSAlphaOnlyTexture] = LoadShaderFromFile("AlphaOnlyTexture.metal",     ShaderType::Fragment, "PSMain",  "1.1", nullptr, VertFmtEmpty);
         shaders[VSShadowMap]        = LoadShaderFromFile("ShadowMapping.metal",        ShaderType::Vertex,   "VShadow", "1.1");
         shaders[VSShadowedScene]    = LoadShaderFromFile("ShadowMapping.metal",        ShaderType::Vertex,   "VScene",  "1.1");
         shaders[PSShadowedScene]    = LoadShaderFromFile("ShadowMapping.metal",        ShaderType::Fragment, "PScene",  "1.1");
@@ -1169,6 +1189,8 @@ bool TestbedContext::LoadShaders()
         shaders[PSUnprojected]      = LoadShaderFromFile("UnprojectedMesh.450core.frag.spv",       ShaderType::Fragment, nullptr, nullptr, nullptr, VertFmtUnprojected);
         shaders[VSDualSourceBlend]  = LoadShaderFromFile("DualSourceBlending.450core.vert.spv",    ShaderType::Vertex,   nullptr, nullptr, nullptr, VertFmtEmpty);
         shaders[PSDualSourceBlend]  = LoadShaderFromFile("DualSourceBlending.450core.frag.spv",    ShaderType::Fragment, nullptr, nullptr, nullptr, VertFmtEmpty);
+        shaders[VSAlphaOnlyTexture] = LoadShaderFromFile("AlphaOnlyTexture.450core.vert.spv",      ShaderType::Vertex,   nullptr, nullptr, nullptr, VertFmtEmpty);
+        shaders[PSAlphaOnlyTexture] = LoadShaderFromFile("AlphaOnlyTexture.450core.frag.spv",      ShaderType::Fragment, nullptr, nullptr, nullptr, VertFmtEmpty);
         shaders[VSShadowMap]        = LoadShaderFromFile("ShadowMapping.VShadow.450core.vert.spv", ShaderType::Vertex);
         shaders[VSShadowedScene]    = LoadShaderFromFile("ShadowMapping.VScene.450core.vert.spv",  ShaderType::Vertex);
         shaders[PSShadowedScene]    = LoadShaderFromFile("ShadowMapping.PScene.450core.frag.spv",  ShaderType::Fragment);
@@ -1219,62 +1241,62 @@ void TestbedContext::CreatePipelineLayouts()
     );
 }
 
-bool TestbedContext::LoadTextures()
+Texture* TestbedContext::LoadTextureFromFile(const char* name, const std::string& filename, LLGL::Format format)
 {
-    auto LoadTextureFromFile = [this](const char* name, const std::string& filename) -> Texture*
+    const std::string texturePath = textureDir + filename;
+
+    auto PrintLoadingInfo = [&texturePath]()
     {
-        auto PrintLoadingInfo = [&filename]()
-        {
-            Log::Printf("Loading image: %s", filename.c_str());
-        };
-
-        if (opt.verbose)
-            PrintLoadingInfo();
-
-        // Load image
-        int w = 0, h = 0, c = 0;
-        stbi_uc* imgBuf = stbi_load(filename.c_str(), &w, &h, &c, 4);
-
-        if (!imgBuf)
-        {
-            if (!opt.verbose)
-                PrintLoadingInfo();
-            PrintColoredResult(TestResult::FailedErrors, " ", ":\n");
-            return nullptr;
-        }
-        else if (opt.verbose)
-            PrintColoredResult(TestResult::Passed);
-
-        // Create texture
-        ImageView imageView;
-        {
-            imageView.format    = ImageFormat::RGBA;
-            imageView.dataType  = DataType::UInt8;
-            imageView.data      = imgBuf;
-            imageView.dataSize  = static_cast<std::size_t>(w*h*4);
-        }
-        TextureDescriptor texDesc;
-        {
-            texDesc.format          = Format::RGBA8UNorm;
-            texDesc.extent.width    = static_cast<std::uint32_t>(w);
-            texDesc.extent.height   = static_cast<std::uint32_t>(h);
-        }
-        Texture* tex = nullptr;
-        (void)CreateTexture(texDesc, name, &tex, &imageView);
-
-        // Release image buffer
-        stbi_image_free(imgBuf);
-
-        return tex;
+        Log::Printf("Loading image: %s", texturePath.c_str());
     };
 
-    const std::string texturePath = "../Media/Textures/";
+    if (opt.verbose)
+        PrintLoadingInfo();
 
-    textures[TextureGrid10x10]      = LoadTextureFromFile("Grid10x10", texturePath + "Grid10x10.png");
-    textures[TextureGradient]       = LoadTextureFromFile("Gradient", texturePath + "Gradient.png");
-    textures[TexturePaintingA_NPOT] = LoadTextureFromFile("PaintingA_NPOT", texturePath + "VanGogh-starry_night.jpg");
-    textures[TexturePaintingB]      = LoadTextureFromFile("PaintingB", texturePath + "JohannesVermeer-girl_with_a_pearl_earring.jpg");
-    textures[TextureDetailMap]      = LoadTextureFromFile("DetailMap", texturePath + "DetailMap.png");
+    // Load image
+    int w = 0, h = 0, c = 0;
+    stbi_uc* imgBuf = stbi_load(texturePath.c_str(), &w, &h, &c, 4);
+
+    if (!imgBuf)
+    {
+        if (!opt.verbose)
+            PrintLoadingInfo();
+        PrintColoredResult(TestResult::FailedErrors, " ", ":\n");
+        return nullptr;
+    }
+    else if (opt.verbose)
+        PrintColoredResult(TestResult::Passed);
+
+    // Create texture
+    ImageView imageView;
+    {
+        imageView.format    = ImageFormat::RGBA;
+        imageView.dataType  = DataType::UInt8;
+        imageView.data      = imgBuf;
+        imageView.dataSize  = static_cast<std::size_t>(w*h*4);
+    }
+    TextureDescriptor texDesc;
+    {
+        texDesc.format          = format;
+        texDesc.extent.width    = static_cast<std::uint32_t>(w);
+        texDesc.extent.height   = static_cast<std::uint32_t>(h);
+    }
+    Texture* tex = nullptr;
+    (void)CreateTexture(texDesc, name, &tex, &imageView);
+
+    // Release image buffer
+    stbi_image_free(imgBuf);
+
+    return tex;
+};
+
+bool TestbedContext::LoadDefaultTextures()
+{
+    textures[TextureGrid10x10]      = LoadTextureFromFile("Grid10x10", "Grid10x10.png");
+    textures[TextureGradient]       = LoadTextureFromFile("Gradient", "Gradient.png");
+    textures[TexturePaintingA_NPOT] = LoadTextureFromFile("PaintingA_NPOT", "VanGogh-starry_night.jpg");
+    textures[TexturePaintingB]      = LoadTextureFromFile("PaintingB", "JohannesVermeer-girl_with_a_pearl_earring.jpg");
+    textures[TextureDetailMap]      = LoadTextureFromFile("DetailMap", "DetailMap.png");
 
     return true;
 }
@@ -1617,15 +1639,16 @@ static bool LoadImage(std::vector<ColorRGBub>& pixels, Extent2D& extent, const s
     return true;
 }
 
-static bool LoadImage(Image& img, const std::string& filename, bool verbose = false)
+static bool LoadImage(Image& img, const std::string& filename, bool verbose = false, ImageFormat format = ImageFormat::RGB)
 {
     if (verbose)
         PrintLoadImageInfo(filename);
 
     int w = 0, h = 0, c = 0;
-    if (stbi_uc* imgBuf = stbi_load(filename.c_str(), &w, &h, &c, 3))
+    const int requestedComponents = (format == ImageFormat::RGB ? 3 : 4);
+    if (stbi_uc* imgBuf = stbi_load(filename.c_str(), &w, &h, &c, requestedComponents))
     {
-        img.Convert(c == 4 ? ImageFormat::RGBA : ImageFormat::RGB, DataType::UInt8);
+        img.Convert(format, DataType::UInt8);
         img.Resize(Extent3D{ static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h), 1 });
         if (img.GetDataSize() == static_cast<std::size_t>(w*h*c))
         {
@@ -1655,10 +1678,10 @@ static bool LoadImage(Image& img, const std::string& filename, bool verbose = fa
     return true;
 }
 
-Image TestbedContext::LoadImageFromFile(const std::string& filename, bool verbose)
+Image TestbedContext::LoadImageFromFile(const std::string& filename, bool verbose, LLGL::ImageFormat format)
 {
     Image img;
-    LoadImage(img, filename, verbose);
+    LoadImage(img, filename, verbose, format);
     return img;
 }
 
@@ -1711,7 +1734,7 @@ void TestbedContext::SaveDepthImage(const std::vector<float>& image, const LLGL:
         invProjection.MakeInverse();
     }
 
-    for (std::size_t i = 0; i < image.size(); ++i)
+    for_range(i, image.size())
     {
         float depthValue = image[i];
 
@@ -1742,7 +1765,7 @@ void TestbedContext::SaveStencilImage(const std::vector<std::uint8_t>& image, co
     std::vector<ColorRGBub> colors;
     colors.resize(image.size());
 
-    for (std::size_t i = 0; i < image.size(); ++i)
+    for_range(i, image.size())
         colors[i] = ColorRGBub{ image[i] };
 
     const std::string path = opt.outputDir + moduleName + "/";

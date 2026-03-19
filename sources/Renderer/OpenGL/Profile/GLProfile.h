@@ -37,9 +37,6 @@ namespace GLProfile
 // Returns the renderer ID number, e.g. RendererID::OpenGL or RendererID::OpenGLES.
 int GetRendererID();
 
-// Returns the renderer module name, e.g. "OpenGL" or "OpenGLES3".
-const char* GetModuleName();
-
 // Returns the renderer name, e.g. "OpenGL Core", "OpenGL Compatibility", "OpenGL ES 3" etc..
 const char* GetRendererName();
 
@@ -75,6 +72,9 @@ void UnmapBuffer(GLenum target);
 
 // Wrapper for glDrawBuffer; uses glDrawBuffers for GLES.
 void DrawBuffer(GLenum buf);
+
+// Wrapper function for glTexParameteri() in GLES and glTexParameteriv() in Desktop GL.
+void TexParameterSwizzleRGBA(GLenum target, const GLint params[4]);
 
 // Wrapper functions for glFramebufferTexture* for GL and GLES.
 void FramebufferTexture1D(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
