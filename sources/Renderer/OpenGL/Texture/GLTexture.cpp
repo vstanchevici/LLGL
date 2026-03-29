@@ -129,6 +129,9 @@ GLTexture::GLTexture(const TextureDescriptor& desc) :
 
 GLTexture::~GLTexture()
 {
+    if (isExternalHandle_)
+        return;
+
     if (IsRenderbuffer())
     {
         /* Delete renderbuffer and notify state manager */
@@ -1223,6 +1226,31 @@ void GLTexture::BindTexParameters(const GLEmulatedSampler& sampler)
     }
 }
 
+void GLTexture::SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
+{
+    auto* nativeHandleGL = GetTypedNativeHandle<OpenGL::ResourceNativeHandle>(nativeHandle, nativeHandleSize);
+    if (!nativeHandleGL)
+        return;
+
+    // Release LLGL-owned GL object first
+    if (!isExternalHandle_)
+    {
+        if (IsRenderbuffer())
+        {
+            GLStateManager::Get().DeleteRenderbuffer(id_);
+        }
+        else
+        {
+            GLStateManager::Get().DeleteTexture(
+                id_, GLStateManager::GetTextureTarget(GetType()));
+            GLTextureViewPool::Get().NotifyTextureRelease(id_);
+        }
+    }
+
+    // Replace with caller-supplied (XR runtime-owned) GL name
+    id_ = nativeHandleGL->id;
+    isExternalHandle_ = true;   // destructor must NOT delete this
+}
 
 /*
  * ======= Private: =======

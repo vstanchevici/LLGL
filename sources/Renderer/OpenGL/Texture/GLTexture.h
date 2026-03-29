@@ -121,6 +121,8 @@ class GLTexture final : public Texture
             return swizzleFormat_;
         }
 
+        void SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize) override;
+
     public:
 
         // Initialize the texture swizzle parameters; the texture must already be bound to an active texture layer.
@@ -147,6 +149,8 @@ class GLTexture final : public Texture
 
         GLuint                      id_                     = 0;                        // GL object name for texture or renderbuffer
         GLenum                      internalFormat_         = 0;
+
+        bool                        isExternalHandle_ = false;
 
         const GLsizei               numMipLevels_           = 1;
         const bool                  isRenderbuffer_         = false;
