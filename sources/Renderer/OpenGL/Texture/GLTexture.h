@@ -153,7 +153,7 @@ class GLTexture final : public Texture
         bool                        isExternalHandle_ = false;
 
         const GLsizei               numMipLevels_           = 1;
-        bool                        isRenderbuffer_         = false;
+        const bool                  isRenderbuffer_         = false;
         const GLSwizzleFormat       swizzleFormat_          = GLSwizzleFormat::RGBA;    // Identity texture swizzle by default
 
         #if !LLGL_GLEXT_GET_TEX_LEVEL_PARAMETER

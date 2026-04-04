@@ -1250,30 +1250,6 @@ void GLTexture::SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize
     // Replace with caller-supplied (XR runtime-owned) GL name
     id_ = nativeHandleGL->id;
     isExternalHandle_ = true;   // destructor must NOT delete this
-
-    TextureDescriptor desc;
-    desc.type = GetType();
-    desc.mipLevels = numMipLevels_;
-    desc.format = GetFormat();
-    desc.extent = Extent3D(extent_[0], extent_[1], extent_[2]);
-    desc.miscFlags = MiscFlags::NoInitialData;
-    desc.bindFlags = GetBindFlags();
-    isRenderbuffer_ = IsRenderbufferSufficient(desc);
-    if (IsRenderbuffer())
-    {
-#if LLGL_GLEXT_DIRECT_STATE_ACCESS
-        if (HasExtension(GLExt::ARB_direct_state_access))
-        {
-            /* Create new GL renderbuffer object */
-            glCreateRenderbuffers(1, &id_);
-        }
-        else
-#endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
-        {
-            /* Create new GL renderbuffer object (must be bound to a target before it can be used) */
-            glGenRenderbuffers(1, &id_);
-        }
-    }
 }
 
 /*
