@@ -27,6 +27,19 @@ class GLVertexArrayObject
 
     public:
 
+        GLVertexArrayObject() = default;
+
+        // Releases the underlying GL VAO name; only safe to run while its owning GL context is current.
+        ~GLVertexArrayObject();
+
+        // Non-copyable/non-movable: owns a unique GL VAO name. Instances are only ever
+        // constructed once (via std::make_shared in GL3PlusSharedContextVertexArray)
+        // so relocation is never required.
+        GLVertexArrayObject(const GLVertexArrayObject&) = delete;
+        GLVertexArrayObject& operator=(const GLVertexArrayObject&) = delete;
+        GLVertexArrayObject(GLVertexArrayObject&&) = delete;
+        GLVertexArrayObject& operator=(GLVertexArrayObject&&) = delete;
+
         // Release VAO from GL context.
         void Release();
 

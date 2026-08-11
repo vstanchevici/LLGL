@@ -16,6 +16,7 @@
 #include "GLVertexInputLayout.h"
 #include "GLVertexArrayObject.h"
 #include <vector>
+#include <memory>
 
 
 namespace LLGL
@@ -63,9 +64,13 @@ class GL3PlusSharedContextVertexArray
 
     private:
 
-        GLVertexInputLayout             inputLayout_;
-        SmallVector<GLContextVAO, 1>    contextDependentVAOs_;
-        StringLiteral                   debugName_;
+        // Each entry is heap-allocated and kept alive via shared_ptr so its address
+        // (and thus the GLVertexArrayObject it owns) stays stable when the SmallVector
+        // grows; SmallVector<T> requires T to be copy-constructible, which a
+        // move-only/non-copyable GLContextVAO could not satisfy directly.
+        GLVertexInputLayout                            inputLayout_;
+        SmallVector<std::shared_ptr<GLContextVAO>, 1>  contextDependentVAOs_;
+        StringLiteral                                  debugName_;
 
 };
 

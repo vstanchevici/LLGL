@@ -21,6 +21,11 @@ namespace LLGL
 {
 
 
+GLVertexArrayObject::~GLVertexArrayObject()
+{
+    Release();
+}
+
 void GLVertexArrayObject::Release()
 {
     #if LLGL_GLEXT_VERTEX_ARRAY_OBJECT

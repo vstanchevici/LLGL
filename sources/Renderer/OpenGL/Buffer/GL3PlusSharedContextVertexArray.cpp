@@ -52,8 +52,11 @@ void GL3PlusSharedContextVertexArray::SetDebugName(const char* name)
     debugName_ = StringLiteral{ (name != nullptr ? name : ""), CopyTag{} };
 
     /* Invalidate debug name for all context dependent VAOs */
-    for (GLContextVAO& contextVAO : contextDependentVAOs_)
-        contextVAO.isObjectLabelDirty = true;
+    for (auto& contextVAO : contextDependentVAOs_)
+    {
+        if (contextVAO != nullptr)
+            contextVAO->isObjectLabelDirty = true;
+    }
 
     /* If this vertex array already has its attributes set, get the current VAO to cause invaldiated labels to be updated */
     if (!inputLayout_.GetAttribs().empty())
@@ -74,36 +77,40 @@ GLVertexArrayObject& GL3PlusSharedContextVertexArray::GetVAOForCurrentContext()
     const std::size_t vaoIndex = static_cast<std::size_t>(contextIndex) - 1;
     if (vaoIndex >= contextDependentVAOs_.size())
     {
-        /* Resize container and fill new entry */
+        /* Resize container to make room for the new entry; existing entries keep their identity since they're only shared_ptr copies */
         contextDependentVAOs_.resize(vaoIndex + 1);
-        contextDependentVAOs_[vaoIndex].vao.BuildVertexLayout(inputLayout_);
-        if (!debugName_.empty())
-            contextDependentVAOs_[vaoIndex].SetObjectLabel(debugName_.c_str());
     }
-    else if (contextDependentVAOs_[vaoIndex].vao.GetID() == 0)
+
+    /* Allocate the context entry on demand; its address stays stable for its lifetime once created */
+    if (contextDependentVAOs_[vaoIndex] == nullptr)
+        contextDependentVAOs_[vaoIndex] = std::make_shared<GLContextVAO>();
+
+    GLContextVAO& contextVAO = *contextDependentVAOs_[vaoIndex];
+
+    if (contextVAO.vao.GetID() == 0)
     {
         /* Fill empty entry in container */
-        contextDependentVAOs_[vaoIndex].vao.BuildVertexLayout(inputLayout_);
+        contextVAO.vao.BuildVertexLayout(inputLayout_);
         if (!debugName_.empty())
-            contextDependentVAOs_[vaoIndex].SetObjectLabel(debugName_.c_str());
+            contextVAO.SetObjectLabel(debugName_.c_str());
     }
     else
     {
-        if (inputLayout_.GetHash() != contextDependentVAOs_[vaoIndex].vao.GetInputLayoutHash())
+        if (inputLayout_.GetHash() != contextVAO.vao.GetInputLayoutHash())
         {
             /* Update vertex attributes if the input layout has changed (i.e. hashes don't match anymore) */
-            contextDependentVAOs_[vaoIndex].vao.BuildVertexLayout(inputLayout_);
+            contextVAO.vao.BuildVertexLayout(inputLayout_);
         }
-        if (contextDependentVAOs_[vaoIndex].isObjectLabelDirty)
+        if (contextVAO.isObjectLabelDirty)
         {
             /* Udpate debug label if it has been invalidated */
             if (!debugName_.empty())
-                contextDependentVAOs_[vaoIndex].SetObjectLabel(debugName_.c_str());
+                contextVAO.SetObjectLabel(debugName_.c_str());
         }
     }
 
     /* Return VAO for current context */
-    return contextDependentVAOs_[vaoIndex].vao;
+    return contextVAO.vao;
 }
 
 
