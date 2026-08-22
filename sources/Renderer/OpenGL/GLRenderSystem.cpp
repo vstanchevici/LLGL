@@ -118,6 +118,8 @@ void GLRenderSystem::Release(CommandBuffer& commandBuffer)
 
 static GLbitfield GetGLBufferStorageFlags(long cpuAccessFlags)
 {
+    #if GL_ARB_buffer_storage
+
     GLbitfield flagsGL = 0;
 
     /* Allways enable dynamic storage, to enable usage of 'glBufferSubData' */
@@ -129,6 +131,12 @@ static GLbitfield GetGLBufferStorageFlags(long cpuAccessFlags)
         flagsGL |= GL_MAP_WRITE_BIT;
 
     return flagsGL;
+
+    #else
+
+    return 0;
+
+    #endif // /GL_ARB_buffer_storage
 }
 
 static GLenum GetGLBufferUsage(long miscFlags)
