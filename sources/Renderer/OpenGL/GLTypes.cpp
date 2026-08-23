@@ -305,6 +305,7 @@ GLenum MapOrZero(const Format format)
 
 GLenum Map(const CPUAccess cpuAccess)
 {
+    #ifdef LLGL_OPENGL
     switch (cpuAccess)
     {
         case CPUAccess::ReadOnly:       return GL_READ_ONLY;
@@ -312,6 +313,7 @@ GLenum Map(const CPUAccess cpuAccess)
         case CPUAccess::WriteDiscard:   return GL_WRITE_ONLY; // discard is optional
         case CPUAccess::ReadWrite:      return GL_READ_WRITE;
     }
+    #endif
     LLGL_TRAP_GL_MAP(CPUAccess, cpuAccess);
 }
 
