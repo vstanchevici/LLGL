@@ -141,6 +141,7 @@ class GLPipelineLayout final : public PipelineLayout
         void BuildHeapResourceBindings(const PipelineLayoutDescriptor& pipelineLayoutDesc);
         void BuildDynamicResourceBindings(const PipelineLayoutDescriptor& pipelineLayoutDesc);
         void BuildStaticSamplers(const PipelineLayoutDescriptor& pipelineLayoutDesc);
+        void BuildImmutableSamplers(const PipelineLayoutDescriptor& pipelineLayoutDesc);
         void BuildCombinedSamplerNames(const PipelineLayoutDescriptor& pipelineLayoutDesc);
 
         // Allocates a new combined sampler slot if the input type and name matches the respective 'combinedTextureSamplers' entry.
@@ -162,6 +163,8 @@ class GLPipelineLayout final : public PipelineLayout
         std::vector<GLuint>                     staticSamplerSlots_;
         std::vector<GLSamplerSPtr>              staticSamplers_;
         std::vector<GLEmulatedSamplerSPtr>      staticEmulatedSamplers_;
+        std::vector<GLuint>                     immutableSamplerSlots_;     // Texture units of combined texture-samplers with immutable sampler
+        std::vector<const Sampler*>             immutableSamplers_;         // Weak references to GLSampler or GLEmulatedSampler (see BindingDescriptor::immutableSampler)
         std::vector<UniformDescriptor>          uniforms_;
         std::vector<GLuint>                     combinedSamplerSlots_;
         const GLbitfield                        barriers_               = 0;

@@ -179,6 +179,9 @@ const (
     FormatETC1UNorm
     FormatETC2UNorm
     FormatETC2UNorm_sRGB
+    FormatNV12
+    FormatP010
+    FormatYUV420P
 )
 
 type ImageFormat int
@@ -701,6 +704,27 @@ const (
     SamplerFilterLinear
 )
 
+type YcbcrModel int
+const (
+    YcbcrModelRGBIdentity YcbcrModel = iota
+    YcbcrModelYcbcrIdentity
+    YcbcrModelYcbcr709
+    YcbcrModelYcbcr601
+    YcbcrModelYcbcr2020
+)
+
+type YcbcrRange int
+const (
+    YcbcrRangeFull YcbcrRange = iota
+    YcbcrRangeNarrow
+)
+
+type ChromaLocation int
+const (
+    ChromaLocationCositedEven ChromaLocation = iota
+    ChromaLocationMidpoint
+)
+
 type ShaderType int
 const (
     ShaderTypeUndefined ShaderType = iota
@@ -780,6 +804,12 @@ const (
     TextureSwizzleAlpha
 )
 
+type ExternalImageType int
+const (
+    ExternalImageTypeUndefined ExternalImageType = iota
+    ExternalImageTypeAndroidHardwareBuffer
+)
+
 
 /* ----- Flags ----- */
 
@@ -823,6 +853,7 @@ const (
     FormatSupportsTexture3D    = (1 << 13)
     FormatSupportsTextureCube  = (1 << 14)
     FormatSupportsVertex       = (1 << 15)
+    FormatIsMultiPlanar        = (1 << 16)
     FormatIsUnsignedInteger    = (FormatIsUnsigned | FormatIsInteger)
     FormatHasDepthStencil      = (FormatHasDepth | FormatHasStencil)
 )
@@ -1153,6 +1184,8 @@ type RenderingFeatures struct {
     HasPipelineCaching           bool /* = false */
     HasPipelineStatistics        bool /* = false */
     HasRenderCondition           bool /* = false */
+    HasSamplerYcbcrConversion    bool /* = false */
+    HasExternalImageAndroid      bool /* = false */
 }
 
 type RenderingLimits struct {
@@ -1283,12 +1316,13 @@ type ImageView struct {
 }
 
 type BindingDescriptor struct {
-    Name       string
-    Type       ResourceType /* = ResourceTypeUndefined */
-    BindFlags  uint         /* = 0 */
-    StageFlags uint         /* = 0 */
-    Slot       BindingSlot
-    ArraySize  uint32       /* = 0 */
+    Name             string
+    Type             ResourceType /* = ResourceTypeUndefined */
+    BindFlags        uint         /* = 0 */
+    StageFlags       uint         /* = 0 */
+    Slot             BindingSlot
+    ArraySize        uint32       /* = 0 */
+    ImmutableSampler *Sampler     /* = nil */
 }
 
 type UniformDescriptor struct {
@@ -1397,24 +1431,6 @@ type AttachmentDescriptor struct {
     ArrayLayer uint32   /* = 0 */
 }
 
-type SamplerDescriptor struct {
-    DebugName      string             /* = "" */
-    AddressModeU   SamplerAddressMode /* = SamplerAddressModeRepeat */
-    AddressModeV   SamplerAddressMode /* = SamplerAddressModeRepeat */
-    AddressModeW   SamplerAddressMode /* = SamplerAddressModeRepeat */
-    MinFilter      SamplerFilter      /* = SamplerFilterLinear */
-    MagFilter      SamplerFilter      /* = SamplerFilterLinear */
-    MipMapFilter   SamplerFilter      /* = SamplerFilterLinear */
-    MipMapEnabled  bool               /* = true */
-    MipMapLODBias  float32            /* = 0.0 */
-    MinLOD         float32            /* = 0.0 */
-    MaxLOD         float32            /* = 1000.0 */
-    MaxAnisotropy  uint32             /* = 1 */
-    CompareEnabled bool               /* = false */
-    CompareOp      CompareOp          /* = CompareOpLess */
-    BorderColor    [4]float32         /* = {0.0,0.0,0.0,0.0} */
-}
-
 type ComputeShaderAttributes struct {
     WorkGroupSize Extent3D /* = {1,1,1} */
 }
@@ -1429,6 +1445,11 @@ type SwapChainDescriptor struct {
     SwapBuffers uint32   /* = 2 */
     Fullscreen  bool     /* = false */
     Resizable   bool     /* = false */
+}
+
+type ExternalImageDescriptor struct {
+    Type   ExternalImageType /* = ExternalImageTypeUndefined */
+    Handle unsafe.Pointer    /* = nil */
 }
 
 type TextureSwizzleRGBA struct {
@@ -1448,20 +1469,6 @@ type TextureRegion struct {
     Subresource TextureSubresource
     Offset      Offset3D
     Extent      Extent3D
-}
-
-type TextureDescriptor struct {
-    DebugName      string      /* = "" */
-    Type           TextureType /* = TextureTypeTexture2D */
-    BindFlags      uint        /* = (BindSampled | BindColorAttachment) */
-    CPUAccessFlags uint        /* = (CPUAccessRead | CPUAccessWrite) */
-    MiscFlags      uint        /* = (MiscFixedSamples | MiscGenerateMips) */
-    Format         Format      /* = FormatRGBA8UNorm */
-    Extent         Extent3D    /* = {1,1,1} */
-    ArrayLayers    uint32      /* = 1 */
-    MipLevels      uint32      /* = 0 */
-    Samples        uint32      /* = 1 */
-    ClearValue     ClearValue
 }
 
 type VertexAttribute struct {
@@ -1494,13 +1501,6 @@ type BufferDescriptor struct {
     CPUAccessFlags uint              /* = 0 */
     MiscFlags      uint              /* = 0 */
     VertexAttribs  []VertexAttribute /* = nil */
-}
-
-type StaticSamplerDescriptor struct {
-    Name       string
-    StageFlags uint              /* = 0 */
-    Slot       BindingSlot
-    Sampler    SamplerDescriptor
 }
 
 type StencilDescriptor struct {
@@ -1538,6 +1538,18 @@ type RenderTargetDescriptor struct {
     DepthStencilAttachment AttachmentDescriptor
 }
 
+type YcbcrConversionDescriptor struct {
+    Format                      Format             /* = FormatUndefined */
+    ExternalFormat              uint64             /* = 0 */
+    Model                       YcbcrModel         /* = YcbcrModelYcbcr709 */
+    Range                       YcbcrRange         /* = YcbcrRangeNarrow */
+    XChromaOffset               ChromaLocation     /* = ChromaLocationMidpoint */
+    YChromaOffset               ChromaLocation     /* = ChromaLocationMidpoint */
+    ChromaFilter                SamplerFilter      /* = SamplerFilterLinear */
+    Swizzle                     TextureSwizzleRGBA
+    ForceExplicitReconstruction bool               /* = false */
+}
+
 type VertexShaderAttributes struct {
     InputAttribs  []VertexAttribute /* = nil */
     OutputAttribs []VertexAttribute /* = nil */
@@ -1558,16 +1570,6 @@ type TextureViewDescriptor struct {
     Format      Format             /* = FormatRGBA8UNorm */
     Subresource TextureSubresource
     Swizzle     TextureSwizzleRGBA
-}
-
-type PipelineLayoutDescriptor struct {
-    DebugName               string                             /* = "" */
-    HeapBindings            []BindingDescriptor                /* = nil */
-    Bindings                []BindingDescriptor                /* = nil */
-    StaticSamplers          []StaticSamplerDescriptor          /* = nil */
-    Uniforms                []UniformDescriptor                /* = nil */
-    CombinedTextureSamplers []CombinedTextureSamplerDescriptor /* = nil */
-    BarrierFlags            uint                               /* = 0 */
 }
 
 type GraphicsPipelineDescriptor struct {
@@ -1606,11 +1608,38 @@ type MeshPipelineDescriptor struct {
     Blend               BlendDescriptor
 }
 
+type ExternalImageProperties struct {
+    Extent                     Extent3D
+    Format                     Format                    /* = FormatUndefined */
+    YcbcrConversion            YcbcrConversionDescriptor
+    RequiresYcbcr              bool                      /* = false */
+    SupportsLinearChromaFilter bool                      /* = false */
+}
+
 type ResourceViewDescriptor struct {
     Resource     *Resource             /* = nil */
     TextureView  TextureViewDescriptor
     BufferView   BufferViewDescriptor
     InitialCount uint32                /* = 0 */
+}
+
+type SamplerDescriptor struct {
+    DebugName       string                     /* = "" */
+    AddressModeU    SamplerAddressMode         /* = SamplerAddressModeRepeat */
+    AddressModeV    SamplerAddressMode         /* = SamplerAddressModeRepeat */
+    AddressModeW    SamplerAddressMode         /* = SamplerAddressModeRepeat */
+    MinFilter       SamplerFilter              /* = SamplerFilterLinear */
+    MagFilter       SamplerFilter              /* = SamplerFilterLinear */
+    MipMapFilter    SamplerFilter              /* = SamplerFilterLinear */
+    MipMapEnabled   bool                       /* = true */
+    MipMapLODBias   float32                    /* = 0.0 */
+    MinLOD          float32                    /* = 0.0 */
+    MaxLOD          float32                    /* = 1000.0 */
+    MaxAnisotropy   uint32                     /* = 1 */
+    CompareEnabled  bool                       /* = false */
+    CompareOp       CompareOp                  /* = CompareOpLess */
+    BorderColor     [4]float32                 /* = {0.0,0.0,0.0,0.0} */
+    YcbcrConversion *YcbcrConversionDescriptor /* = nil */
 }
 
 type ShaderDescriptor struct {
@@ -1634,6 +1663,39 @@ type ShaderReflection struct {
     Vertex    VertexShaderAttributes
     Fragment  FragmentShaderAttributes
     Compute   ComputeShaderAttributes
+}
+
+type TextureDescriptor struct {
+    DebugName       string                     /* = "" */
+    Type            TextureType                /* = TextureTypeTexture2D */
+    BindFlags       uint                       /* = (BindSampled | BindColorAttachment) */
+    CPUAccessFlags  uint                       /* = (CPUAccessRead | CPUAccessWrite) */
+    MiscFlags       uint                       /* = (MiscFixedSamples | MiscGenerateMips) */
+    Format          Format                     /* = FormatRGBA8UNorm */
+    Extent          Extent3D                   /* = {1,1,1} */
+    ArrayLayers     uint32                     /* = 1 */
+    MipLevels       uint32                     /* = 0 */
+    Samples         uint32                     /* = 1 */
+    ClearValue      ClearValue
+    External        *ExternalImageDescriptor   /* = nil */
+    YcbcrConversion *YcbcrConversionDescriptor /* = nil */
+}
+
+type StaticSamplerDescriptor struct {
+    Name       string
+    StageFlags uint              /* = 0 */
+    Slot       BindingSlot
+    Sampler    SamplerDescriptor
+}
+
+type PipelineLayoutDescriptor struct {
+    DebugName               string                             /* = "" */
+    HeapBindings            []BindingDescriptor                /* = nil */
+    Bindings                []BindingDescriptor                /* = nil */
+    StaticSamplers          []StaticSamplerDescriptor          /* = nil */
+    Uniforms                []UniformDescriptor                /* = nil */
+    CombinedTextureSamplers []CombinedTextureSamplerDescriptor /* = nil */
+    BarrierFlags            uint                               /* = 0 */
 }
 
 

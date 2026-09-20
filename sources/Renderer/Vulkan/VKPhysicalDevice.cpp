@@ -145,12 +145,26 @@ bool VKPhysicalDevice::PickPhysicalDevice(VkInstance instance, const ArrayView<c
     return false;
 }
 
-void VKPhysicalDevice::LoadPhysicalDeviceWeakRef(VkPhysicalDevice physicalDevice)
+void VKPhysicalDevice::LoadPhysicalDeviceWeakRef(
+    VkPhysicalDevice                physicalDevice,
+    const ArrayView<const char*>&   enabledDeviceExtensions,
+    const void*                     enabledDeviceFeatures)
 {
     LLGL_ASSERT(physicalDevice != VK_NULL_HANDLE);
     LLGL_ASSERT(physicalDevice_ == VK_NULL_HANDLE, "physical Vulkan device already set");
     physicalDevice_ = physicalDevice;
+
+    /*
+    LLGL cannot enable any extension for a device it did not create, so only the extensions the client enabled are considered available.
+    Otherwise, the rendering capabilities would report features whose extensions were never enabled for this device.
+    */
+    supportedExtensions_ = VKQueryDeviceExtensionProperties(physicalDevice);
+    EnableCustomDeviceExtensions(enabledDeviceExtensions);
+
     QueryDeviceInfo();
+
+    /* The features of the custom device are not known to LLGL, so only use what the client specified */
+    QueryCustomDeviceFeatures(enabledDeviceFeatures);
 }
 
 static std::vector<Format> GetDefaultSupportedVKTextureFormats()
@@ -284,6 +298,24 @@ void VKPhysicalDevice::QueryRenderingCaps(RenderingCapabilities& caps)
         caps.textureFormats.insert(caps.textureFormats.end(), compressedFormatsETC2.begin(), compressedFormatsETC2.end());
     }
 
+    const bool hasSamplerYcbcrConversion = HasExtension(VKExt::KHR_sampler_ycbcr_conversion);
+    if (hasSamplerYcbcrConversion)
+    {
+        /* Multi-planar formats must be sampleable with at least one chroma location to be usable with a Y'CbCr conversion */
+        for (Format format : { Format::NV12, Format::P010, Format::YUV420P })
+        {
+            VkFormatProperties formatProperties;
+            vkGetPhysicalDeviceFormatProperties(physicalDevice_, VKTypes::Map(format), &formatProperties);
+
+            constexpr VkFormatFeatureFlags requiredFeatures     = (VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT);
+            constexpr VkFormatFeatureFlags chromaLocationFlags  = (VK_FORMAT_FEATURE_MIDPOINT_CHROMA_SAMPLES_BIT | VK_FORMAT_FEATURE_COSITED_CHROMA_SAMPLES_BIT);
+
+            const VkFormatFeatureFlags optimalFeatures = formatProperties.optimalTilingFeatures;
+            if ((optimalFeatures & requiredFeatures) == requiredFeatures && (optimalFeatures & chromaLocationFlags) != 0)
+                caps.textureFormats.push_back(format);
+        }
+    }
+
     /* Query features */
     caps.features.hasRenderTargets                  = true;
     caps.features.has3DTextures                     = true;
@@ -312,6 +344,8 @@ void VKPhysicalDevice::QueryRenderingCaps(RenderingCapabilities& caps)
     caps.features.hasPipelineStatistics             = (features.pipelineStatisticsQuery != VK_FALSE);
     caps.features.hasRenderCondition                = SupportsExtension(VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME);
     caps.features.hasPipelineCaching                = true;
+    caps.features.hasSamplerYcbcrConversion         = hasSamplerYcbcrConversion;
+    caps.features.hasExternalImageAndroid           = (hasSamplerYcbcrConversion && HasExtension(VKExt::ANDROID_external_memory_android_hardware_buffer));
 
     /* Query limits */
     caps.limits.lineWidthRange[0]                   = limits.lineWidthRange[0];
@@ -397,6 +431,68 @@ bool VKPhysicalDevice::SupportsExtension(const char* extension) const
  * ======= Private: =======
  */
 
+void VKPhysicalDevice::EnableCustomDeviceExtensions(const ArrayView<const char*>& extensions)
+{
+    for (const VkExtensionProperties& supportedExtension : supportedExtensions_)
+    {
+        for (const char* name : extensions)
+        {
+            if (name != nullptr && std::strcmp(name, supportedExtension.extensionName) == 0)
+            {
+                /*
+                Store pointers to the names of the device's extension properties, so we don't depend on the lifetime of the client's strings.
+                Only client enabled extensions are registered as supported, see LoadPhysicalDeviceWeakRef.
+                */
+                supportedExtensionNames_.insert(supportedExtension.extensionName);
+                enabledExtensionNames_.push_back(supportedExtension.extensionName);
+                break;
+            }
+        }
+    }
+}
+
+// Base structure to iterate a Vulkan pNext chain.
+struct VKBaseInStructure
+{
+    VkStructureType             sType;
+    const VKBaseInStructure*    pNext;
+};
+
+void VKPhysicalDevice::QueryCustomDeviceFeatures(const void* enabledDeviceFeatures)
+{
+    isSamplerYcbcrConversionEnabled_ = false;
+
+    /* Search the client's feature chain for the sampler Y'CbCr conversion feature */
+    for (auto* next = static_cast<const VKBaseInStructure*>(enabledDeviceFeatures); next != nullptr; next = next->pNext)
+    {
+        switch (next->sType)
+        {
+            #if VK_KHR_sampler_ycbcr_conversion
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES_KHR:
+            {
+                auto* features = reinterpret_cast<const VkPhysicalDeviceSamplerYcbcrConversionFeaturesKHR*>(next);
+                if (features->samplerYcbcrConversion != VK_FALSE)
+                    isSamplerYcbcrConversionEnabled_ = true;
+            }
+            break;
+            #endif
+
+            #if VK_VERSION_1_2
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES:
+            {
+                auto* features = reinterpret_cast<const VkPhysicalDeviceVulkan11Features*>(next);
+                if (features->samplerYcbcrConversion != VK_FALSE)
+                    isSamplerYcbcrConversionEnabled_ = true;
+            }
+            break;
+            #endif
+
+            default:
+            break;
+        }
+    }
+}
+
 bool VKPhysicalDevice::EnableExtensions(const char** extensions, bool required)
 {
     for (; *extensions != nullptr; ++extensions)
@@ -435,6 +531,14 @@ void VKPhysicalDevice::QueryDeviceFeatures()
 {
     #if VK_KHR_get_physical_device_properties2
 
+    /*
+    Features that were promoted to Vulkan 1.1 can be used without their extension if the effective API version is 1.1 or later,
+    which is the minimum of the version of the instance this device is used with and the version of the device itself.
+    */
+    VkPhysicalDeviceProperties basicProperties;
+    vkGetPhysicalDeviceProperties(physicalDevice_, &basicProperties);
+    const bool isVulkan11Supported = (std::min(instanceApiVersion_, basicProperties.apiVersion) >= VK_API_VERSION_1_1);
+
     VKBaseStructureInfo* currentDesc = nullptr;
 
     auto AppendFeaturesDesc = [&currentDesc](void* descPtr, VkStructureType type) -> void
@@ -468,7 +572,18 @@ void VKPhysicalDevice::QueryDeviceFeatures()
         AppendFeaturesDesc(&imagelessFramebufferFeatures_, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES_KHR);
     #endif
 
+    #if VK_KHR_sampler_ycbcr_conversion
+    const bool hasSamplerYcbcrConversionFeatures = (isVulkan11Supported || SupportsExtension(VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME));
+    if (hasSamplerYcbcrConversionFeatures)
+        AppendFeaturesDesc(&samplerYcbcrConversionFeatures_, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES_KHR);
+    #endif
+
     vkGetPhysicalDeviceFeatures2(physicalDevice_, &features_);
+
+    /* Features chained into 'features_' are enabled when LLGL creates the logical device (see VKDevice::CreateLogicalDevice) */
+    #if VK_KHR_sampler_ycbcr_conversion
+    isSamplerYcbcrConversionEnabled_ = (hasSamplerYcbcrConversionFeatures && samplerYcbcrConversionFeatures_.samplerYcbcrConversion != VK_FALSE);
+    #endif
 
     #else // VK_KHR_get_physical_device_properties2
 

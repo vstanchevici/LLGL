@@ -247,6 +247,10 @@ LLGL_EXPORT const char* ToString(const Format val)
         LLGL_CASE_TO_STR_TYPED( Format, BC4SNorm          );
         LLGL_CASE_TO_STR_TYPED( Format, BC5UNorm          );
         LLGL_CASE_TO_STR_TYPED( Format, BC5SNorm          );
+        LLGL_CASE_TO_STR_TYPED( Format, BC6HUFloat        );
+        LLGL_CASE_TO_STR_TYPED( Format, BC6HSFloat        );
+        LLGL_CASE_TO_STR_TYPED( Format, BC7UNorm          );
+        LLGL_CASE_TO_STR_TYPED( Format, BC7UNorm_sRGB     );
 
         /* --- Advanced scalable texture compression (ASTC) formats --- */
         LLGL_CASE_TO_STR_TYPED( Format, ASTC4x4           );
@@ -282,6 +286,11 @@ LLGL_EXPORT const char* ToString(const Format val)
         LLGL_CASE_TO_STR_TYPED( Format, ETC1UNorm         );
         LLGL_CASE_TO_STR_TYPED( Format, ETC2UNorm         );
         LLGL_CASE_TO_STR_TYPED( Format, ETC2UNorm_sRGB    );
+
+        /* --- Multi-planar Y'CbCr formats --- */
+        LLGL_CASE_TO_STR_TYPED( Format, NV12              );
+        LLGL_CASE_TO_STR_TYPED( Format, P010              );
+        LLGL_CASE_TO_STR_TYPED( Format, YUV420P           );
     }
 
     return nullptr;

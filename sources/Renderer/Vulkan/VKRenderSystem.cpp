@@ -28,7 +28,12 @@
 #include "Shader/VKShaderModulePool.h"
 #include "../../Platform/Debug.h"
 #include <LLGL/ImageFlags.h>
+#include <LLGL/Log.h>
 #include <limits>
+
+#if VK_ANDROID_external_memory_android_hardware_buffer
+#   include "Platform/Android/VKAndroidHardwareBuffer.h"
+#endif
 
 #include <LLGL/Backend/Vulkan/NativeHandle.h>
 
@@ -61,6 +66,13 @@ VKRenderSystem::VKRenderSystem(const RenderSystemDescriptor& renderSystemDesc) :
 
     QuerySupportedInstanceExtensions();
 
+    /*
+    Determine the API version of the Vulkan instance. For a custom instance, LLGL does not know which version the client requested,
+    so the version the loader supports is used as upper bound.
+    */
+    vkEnumerateInstanceVersion(&instanceApiVersion_);
+    physicalDevice_.SetInstanceApiVersion(instanceApiVersion_);
+
     if (auto* customNativeHandle = GetRendererNativeHandle<Vulkan::RenderSystemNativeHandle>(renderSystemDesc))
     {
         /* Store weak references to native handles */
@@ -68,7 +80,7 @@ VKRenderSystem::VKRenderSystem(const RenderSystemDescriptor& renderSystemDesc) :
         if (isDebugLayerEnabled_)
             CreateDebugReportCallback();
         VKLoadInstanceExtensions(instance_, supportedInstanceExtensions_);
-        if (!PickPhysicalDevice(preferredDeviceFlags, customNativeHandle->physicalDevice))
+        if (!PickPhysicalDevice(preferredDeviceFlags, customNativeHandle->physicalDevice, rendererConfigVK))
             return;
         CreateLogicalDevice(customNativeHandle->device);
     }
@@ -94,6 +106,10 @@ VKRenderSystem::VKRenderSystem(const RenderSystemDescriptor& renderSystemDesc) :
         (rendererConfigVK != nullptr ? rendererConfigVK->minDeviceMemoryAllocationSize : 1024*1024),
         (rendererConfigVK != nullptr ? rendererConfigVK->reduceDeviceMemoryFragmentation : false)
     );
+
+    /* Create pool for sampler Y'CbCr conversions if the device supports them */
+    if (HasExtension(VKExt::KHR_sampler_ycbcr_conversion))
+        ycbcrConversionPool_ = MakeUnique<VKYcbcrConversionPool>(device_, physicalDevice_.GetVkPhysicalDevice());
 }
 
 VKRenderSystem::~VKRenderSystem()
@@ -317,6 +333,12 @@ static VkImageLayout FindOptimalInitialVkImageLayout(Format format, long bindFla
 
 Texture* VKRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, const ImageView* initialImage)
 {
+    /* External and multi-planar textures have their own initialization */
+    if (textureDesc.external != nullptr)
+        return CreateExternalTexture(textureDesc);
+    if (IsMultiPlanarFormat(textureDesc.format))
+        return CreateMultiPlanarTexture(textureDesc, initialImage);
+
     /* Determine size of image for staging buffer */
     const std::uint32_t imageSize       = NumMipTexels(textureDesc, 0);
     const std::size_t   initialDataSize = GetMemoryFootprint(textureDesc.format, imageSize);
@@ -408,7 +430,7 @@ Texture* VKRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, con
     }
 
     /* Create device texture */
-    VKTexture* textureVK = textures_.emplace<VKTexture>(device_, *deviceMemoryMngr_, textureDesc);
+    VKTexture* textureVK = textures_.emplace<VKTexture>(device_, *deviceMemoryMngr_, textureDesc, ycbcrConversionPool_.get());
 
     if (initialData != nullptr && !IsMultiSampleTexture(textureDesc.type))
     {
@@ -501,6 +523,18 @@ void VKRenderSystem::WriteTexture(Texture& texture, const TextureRegion& texture
 {
     auto& textureVK = LLGL_CAST(VKTexture&, texture);
 
+    if (textureVK.IsExternal())
+    {
+        Log::Errorf("cannot write to external Vulkan texture\n");
+        return;
+    }
+
+    if (textureVK.IsMultiPlanar())
+    {
+        WriteMultiPlanarTexture(textureVK, textureRegion, srcImageView);
+        return;
+    }
+
     /* Determine size of image for staging buffer */
     const TextureSubresource&   subresource     = textureRegion.subresource;
   //const Offset3D              offset          = CalcTextureOffset(textureVK.GetType(), textureRegion.offset, subresource.baseArrayLayer);
@@ -582,6 +616,12 @@ void VKRenderSystem::WriteTexture(Texture& texture, const TextureRegion& texture
 void VKRenderSystem::ReadTexture(Texture& texture, const TextureRegion& textureRegion, const MutableImageView& dstImageView)
 {
     auto& textureVK = LLGL_CAST(VKTexture&, texture);
+
+    if (textureVK.IsExternal() || textureVK.IsMultiPlanar())
+    {
+        Log::Errorf("cannot read from external or multi-planar Vulkan texture\n");
+        return;
+    }
 
     /* Determine size of image for staging buffer */
     const TextureSubresource&   subresource     = textureRegion.subresource;
@@ -672,7 +712,7 @@ void VKRenderSystem::ReadTexture(Texture& texture, const TextureRegion& textureR
 
 Sampler* VKRenderSystem::CreateSampler(const SamplerDescriptor& samplerDesc)
 {
-    return samplers_.emplace<VKSampler>(device_, samplerDesc);
+    return samplers_.emplace<VKSampler>(device_, samplerDesc, ycbcrConversionPool_.get());
 }
 
 void VKRenderSystem::Release(Sampler& sampler)
@@ -816,6 +856,33 @@ void VKRenderSystem::Release(Fence& fence)
 
 /* ----- Extensions ----- */
 
+bool VKRenderSystem::QueryExternalImageProperties(const ExternalImageDescriptor& externalImageDesc, ExternalImageProperties& outProperties)
+{
+    #if VK_ANDROID_external_memory_android_hardware_buffer
+
+    if (externalImageDesc.type == ExternalImageType::AndroidHardwareBuffer && HasExtension(VKExt::ANDROID_external_memory_android_hardware_buffer))
+    {
+        VKAndroidHardwareBufferProperties props;
+        if (VKQueryAndroidHardwareBufferProperties(device_, static_cast<AHardwareBuffer*>(externalImageDesc.handle), props))
+        {
+            /* Remember format features of external format, so Y'CbCr conversions can apply fallbacks for unsupported features */
+            if (ycbcrConversionPool_)
+                ycbcrConversionPool_->RegisterExternalFormatFeatures(props.externalFormat, props.formatFeatures);
+            VKConvertAndroidHardwareBufferProperties(props, outProperties);
+            return true;
+        }
+    }
+
+    #else
+
+    (void)externalImageDesc;
+    (void)outProperties;
+
+    #endif // /VK_ANDROID_external_memory_android_hardware_buffer
+
+    return false;
+}
+
 bool VKRenderSystem::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
 {
     if (nativeHandle != nullptr && nativeHandleSize == sizeof(Vulkan::RenderSystemNativeHandle))
@@ -866,8 +933,7 @@ void VKRenderSystem::QuerySupportedInstanceExtensions()
 void VKRenderSystem::CreateInstance(const RendererConfigurationVulkan* config)
 {
     /* Determine supported Vulkan API version */
-    std::uint32_t instanceVersion = 0;
-    vkEnumerateInstanceVersion(&instanceVersion);
+    const std::uint32_t instanceVersion = instanceApiVersion_;
     LLGL_ASSERT(instanceVersion >= VK_API_VERSION_1_0, "vkEnumerateInstanceVersion(instanceVersion = %u)", instanceVersion);
 
     /* Query instance layer properties */
@@ -1024,13 +1090,16 @@ void VKRenderSystem::CreateDebugReportCallback()
     VKThrowIfFailed(result, "failed to create Vulkan debug report callback");
 }
 
-bool VKRenderSystem::PickPhysicalDevice(long preferredDeviceFlags, VkPhysicalDevice customPhysicalDevice)
+bool VKRenderSystem::PickPhysicalDevice(long preferredDeviceFlags, VkPhysicalDevice customPhysicalDevice, const RendererConfigurationVulkan* config)
 {
     /* Pick physical device with Vulkan support */
     if (customPhysicalDevice != VK_NULL_HANDLE)
     {
-        /* Load weak reference to custom native physical device */
-        physicalDevice_.LoadPhysicalDeviceWeakRef(customPhysicalDevice);
+        /* Load weak reference to custom native physical device with the extensions and features the client enabled for its device */
+        if (config != nullptr)
+            physicalDevice_.LoadPhysicalDeviceWeakRef(customPhysicalDevice, config->enabledDeviceExtensions, config->enabledDeviceFeatures);
+        else
+            physicalDevice_.LoadPhysicalDeviceWeakRef(customPhysicalDevice);
     }
     else if (!physicalDevice_.PickPhysicalDevice(instance_, supportedInstanceExtensions_, preferredDeviceFlags))
     {
@@ -1053,7 +1122,7 @@ void VKRenderSystem::CreateLogicalDevice(VkDevice customLogicalDevice)
     commandQueue_ = MakeUnique<VKCommandQueue>(device_, device_.GetVkQueue());
 
     /* Load Vulkan device extensions */
-    VKLoadDeviceExtensions(device_, physicalDevice_.GetExtensionNames());
+    VKLoadDeviceExtensions(device_, physicalDevice_.GetExtensionNames(), physicalDevice_.IsSamplerYcbcrConversionEnabled());
 }
 
 bool VKRenderSystem::IsLayerRequired(const char* name, const RendererConfigurationVulkan* config) const
@@ -1150,6 +1219,91 @@ VkCommandBuffer VKRenderSystem::AllocCommandBuffer(bool begin)
 void VKRenderSystem::FlushCommandBuffer(VkCommandBuffer commandBuffer)
 {
     device_.FlushCommandBuffer(commandBuffer);
+}
+
+Texture* VKRenderSystem::CreateExternalTexture(const TextureDescriptor& textureDesc)
+{
+    /* Import external image; its layout is managed by CommandBuffer::AcquireExternalTexture and CommandBuffer::ReleaseExternalTexture */
+    VKTexture* textureVK = textures_.emplace<VKTexture>(device_, *deviceMemoryMngr_, textureDesc, ycbcrConversionPool_.get());
+    textureVK->CreateInternalImageView(device_);
+    return textureVK;
+}
+
+Texture* VKRenderSystem::CreateMultiPlanarTexture(const TextureDescriptor& textureDesc, const ImageView* initialImage)
+{
+    VKTexture* textureVK = textures_.emplace<VKTexture>(device_, *deviceMemoryMngr_, textureDesc, ycbcrConversionPool_.get());
+
+    const TextureSubresource subresource{ 0, 1, 0, 1 };
+
+    if (initialImage != nullptr && initialImage->data != nullptr)
+    {
+        /* Upload tightly packed planes (e.g. Y plane followed by interleaved CbCr plane for NV12) via staging buffer */
+        const VkDeviceSize imageDataSize = VKCommandContext::GetMultiPlanarImageDataSize(textureVK->GetVkFormat(), textureVK->GetVkExtent());
+        LLGL_ASSERT(initialImage->dataSize >= imageDataSize, "initial image data too small for multi-planar texture");
+
+        VkBufferCreateInfo stagingCreateInfo;
+        BuildVkBufferCreateInfo(stagingCreateInfo, imageDataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        VKDeviceBuffer stagingBuffer = CreateStagingBufferAndInitialize(stagingCreateInfo, initialImage->data, imageDataSize);
+
+        VkCommandBuffer cmdBuffer = AllocCommandBuffer();
+        {
+            textureVK->TransitionImageLayout(context_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, subresource, true);
+            context_.CopyBufferToMultiPlanarImage(
+                stagingBuffer.GetVkBuffer(),
+                textureVK->GetVkImage(),
+                textureVK->GetVkFormat(),
+                VkOffset3D{ 0, 0, 0 },
+                textureVK->GetVkExtent()
+            );
+            textureVK->TransitionImageLayout(context_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, subresource, true);
+        }
+        FlushCommandBuffer(cmdBuffer);
+
+        stagingBuffer.ReleaseMemoryRegion(*deviceMemoryMngr_);
+    }
+    else
+    {
+        /* Without initial data, the image content is undefined but the texture is ready to be sampled */
+        VkCommandBuffer cmdBuffer = AllocCommandBuffer();
+        {
+            textureVK->TransitionImageLayout(context_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, subresource, true);
+        }
+        FlushCommandBuffer(cmdBuffer);
+    }
+
+    textureVK->CreateInternalImageView(device_);
+
+    return textureVK;
+}
+
+void VKRenderSystem::WriteMultiPlanarTexture(VKTexture& textureVK, const TextureRegion& textureRegion, const ImageView& srcImageView)
+{
+    /* Region must cover full chroma samples, i.e. offset and extent must be multiples of the subsampling factor (2 for 4:2:0 formats) */
+    const VkOffset3D offset{ textureRegion.offset.x, textureRegion.offset.y, 0 };
+    const VkExtent3D extent{ textureRegion.extent.width, textureRegion.extent.height, 1u };
+
+    const VkDeviceSize imageDataSize = VKCommandContext::GetMultiPlanarImageDataSize(textureVK.GetVkFormat(), extent);
+    if (imageDataSize == 0 || srcImageView.data == nullptr || srcImageView.dataSize < imageDataSize)
+    {
+        Log::Errorf("invalid image data to write multi-planar Vulkan texture\n");
+        return;
+    }
+
+    VkBufferCreateInfo stagingCreateInfo;
+    BuildVkBufferCreateInfo(stagingCreateInfo, imageDataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    VKDeviceBuffer stagingBuffer = CreateStagingBufferAndInitialize(stagingCreateInfo, srcImageView.data, imageDataSize);
+
+    const TextureSubresource subresource{ 0, 1, 0, 1 };
+
+    VkCommandBuffer cmdBuffer = AllocCommandBuffer();
+    {
+        VkImageLayout oldLayout = textureVK.TransitionImageLayout(context_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, subresource, true);
+        context_.CopyBufferToMultiPlanarImage(stagingBuffer.GetVkBuffer(), textureVK.GetVkImage(), textureVK.GetVkFormat(), offset, extent);
+        textureVK.TransitionImageLayout(context_, oldLayout, subresource, true);
+    }
+    FlushCommandBuffer(cmdBuffer);
+
+    stagingBuffer.ReleaseMemoryRegion(*deviceMemoryMngr_);
 }
 
 bool VKRenderSystem::QueryRendererDetails(RendererInfo* outInfo, RenderingCapabilities* outCaps)

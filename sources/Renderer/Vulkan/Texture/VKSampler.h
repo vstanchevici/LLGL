@@ -10,7 +10,8 @@
 
 
 #include <LLGL/Sampler.h>
-#include <vulkan/vulkan.h>
+#include "VKYcbcrConversionPool.h"
+#include "../Vulkan.h"
 #include "../VKPtr.h"
 
 
@@ -31,12 +32,19 @@ class VKSampler final : public Sampler
 
     public:
 
-        VKSampler(VkDevice device, const SamplerDescriptor& desc);
+        // Creates a sampler. If SamplerDescriptor::ycbcrConversion is non-null, the conversion is acquired from the specified pool.
+        VKSampler(VkDevice device, const SamplerDescriptor& desc, VKYcbcrConversionPool* ycbcrConversionPool = nullptr);
 
         // Returns the Vulkan sampler object.
         inline VkSampler GetVkSampler() const
         {
             return sampler_.Get();
+        }
+
+        // Returns the Y'CbCr conversion of this sampler or null if this sampler has no conversion.
+        inline VKYcbcrConversion* GetYcbcrConversion() const
+        {
+            return ycbcrConversion_.get();
         }
 
     public:
@@ -49,8 +57,14 @@ class VKSampler final : public Sampler
 
     private:
 
-        VkDevice            device_     = VK_NULL_HANDLE;
-        VKPtr<VkSampler>    sampler_;
+        // Creates a native Vulkan sampler with a Y'CbCr conversion.
+        void CreateVkSamplerWithYcbcrConversion(VkDevice device, const SamplerDescriptor& desc);
+
+    private:
+
+        VkDevice                device_             = VK_NULL_HANDLE;
+        VKYcbcrConversionSPtr   ycbcrConversion_;
+        VKPtr<VkSampler>        sampler_;
 
 };
 

@@ -820,6 +820,29 @@ void DbgCommandBuffer::SetResource(std::uint32_t descriptor, Resource& resource)
                     (BindFlags::Sampled | BindFlags::Storage | BindFlags::CombinedSampler),
                     GetLabelOrDefault(textureDbg.label, "LLGL::Buffer")
                 );
+
+                /* Textures with a Y'CbCr conversion can only be sampled with an immutable sampler that has the same conversion */
+                if (textureDbg.hasYcbcrConversion && bindingDesc->immutableSampler == nullptr)
+                {
+                    LLGL_DBG_ERROR(
+                        ErrorType::InvalidState,
+                        "texture '%s' with Y'CbCr conversion must be bound to a binding with an immutable sampler (see LLGL::BindingDescriptor::immutableSampler)",
+                        GetResourceLabel(resource)
+                    );
+                }
+            }
+
+            /* External textures must be acquired from their producer before they are accessed */
+            if (LLGL_DBG_SOURCE())
+            {
+                if (textureDbg.isExternal && !IsExternalTextureAcquired(textureDbg))
+                {
+                    LLGL_DBG_ERROR(
+                        ErrorType::InvalidState,
+                        "external texture '%s' is bound without being acquired first; missing call to <LLGL::CommandBuffer::AcquireExternalTexture>",
+                        GetResourceLabel(resource)
+                    );
+                }
             }
 
             LLGL_DBG_COMMAND_EXT(
@@ -918,6 +941,64 @@ void DbgCommandBuffer::ResourceBarrier(
     LLGL_DBG_COMMAND_EXT(
         instance.ResourceBarrier(numBuffers, bufferInstances.data(), numTextures, textureInstances.data()),
         "ResourceBarrier(%u, %p, %u, %p)", numBuffers, buffers, numTextures, textures
+    );
+}
+
+void DbgCommandBuffer::AcquireExternalTexture(Texture& texture, long long nativeFence)
+{
+    auto& textureDbg = LLGL_DBG_CAST(DbgTexture&, texture);
+
+    if (LLGL_DBG_SOURCE())
+    {
+        AssertRecording();
+        if (states_.insideRenderPass)
+            LLGL_DBG_ERROR(ErrorType::InvalidState, "cannot acquire external texture '%s' inside a render pass", GetResourceLabel(texture));
+        if (!textureDbg.isExternal)
+            LLGL_DBG_ERROR(ErrorType::InvalidArgument, "cannot acquire texture '%s' that was not created from an external image", GetResourceLabel(texture));
+        if (IsExternalTextureAcquired(textureDbg))
+            LLGL_DBG_ERROR(ErrorType::InvalidState, "external texture '%s' has already been acquired; missing call to <LLGL::CommandBuffer::ReleaseExternalTexture>", GetResourceLabel(texture));
+        else
+            states_.acquiredExternalTextures.push_back(&textureDbg);
+
+        /* The fence is consumed by the first submission, so a command buffer with an external fence must be recorded again for each submission */
+        if (nativeFence >= 0 && (desc.flags & CommandBufferFlags::MultiSubmit) != 0)
+        {
+            LLGL_DBG_ERROR(
+                ErrorType::InvalidState,
+                "cannot acquire external texture '%s' with a fence in a command buffer that was created with 'LLGL::CommandBufferFlags::MultiSubmit'",
+                GetResourceLabel(texture)
+            );
+        }
+    }
+
+    LLGL_DBG_COMMAND_EXT(
+        instance.AcquireExternalTexture(textureDbg.instance, nativeFence),
+        "AcquireExternalTexture(%s, %lld)", GetResourceLabel(texture), nativeFence
+    );
+}
+
+void DbgCommandBuffer::ReleaseExternalTexture(Texture& texture)
+{
+    auto& textureDbg = LLGL_DBG_CAST(DbgTexture&, texture);
+
+    if (LLGL_DBG_SOURCE())
+    {
+        AssertRecording();
+        if (states_.insideRenderPass)
+            LLGL_DBG_ERROR(ErrorType::InvalidState, "cannot release external texture '%s' inside a render pass", GetResourceLabel(texture));
+        if (!textureDbg.isExternal)
+            LLGL_DBG_ERROR(ErrorType::InvalidArgument, "cannot release texture '%s' that was not created from an external image", GetResourceLabel(texture));
+
+        auto it = std::find(states_.acquiredExternalTextures.begin(), states_.acquiredExternalTextures.end(), &textureDbg);
+        if (it == states_.acquiredExternalTextures.end())
+            LLGL_DBG_ERROR(ErrorType::InvalidState, "external texture '%s' was released without being acquired first", GetResourceLabel(texture));
+        else
+            states_.acquiredExternalTextures.erase(it);
+    }
+
+    LLGL_DBG_COMMAND_EXT(
+        instance.ReleaseExternalTexture(textureDbg.instance),
+        "ReleaseExternalTexture(%s)", GetResourceLabel(texture)
     );
 }
 
@@ -1790,6 +1871,17 @@ void DbgCommandBuffer::ValidateEndOfRecording()
     {
         if (!states_.recording)
             LLGL_DBG_ERROR(ErrorType::InvalidState, "cannot end recording of command buffer while no recording is currently active");
+
+        /* External textures must be released before the command buffer is submitted, so their producer can write to them again */
+        if (!states_.acquiredExternalTextures.empty())
+        {
+            LLGL_DBG_WARN(
+                WarningType::ImproperState,
+                "end of command buffer recording with %zu external texture(s) still acquired; missing call to <LLGL::CommandBuffer::ReleaseExternalTexture>",
+                states_.acquiredExternalTextures.size()
+            );
+        }
+
         states_.recording           = false;
         states_.finishedRecording   = true;
     }
@@ -2869,6 +2961,11 @@ void DbgCommandBuffer::AssertRecording()
 {
     if (!states_.recording)
         LLGL_DBG_ERROR(ErrorType::InvalidArgument, "command buffer must be in record mode; missing call to <LLGL::CommandBuffer::Begin>");
+}
+
+bool DbgCommandBuffer::IsExternalTextureAcquired(DbgTexture& textureDbg) const
+{
+    return (std::find(states_.acquiredExternalTextures.begin(), states_.acquiredExternalTextures.end(), &textureDbg) != states_.acquiredExternalTextures.end());
 }
 
 void DbgCommandBuffer::AssertInsideRenderPass()

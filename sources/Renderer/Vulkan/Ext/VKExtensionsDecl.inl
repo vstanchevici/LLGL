@@ -79,6 +79,23 @@ DECL_VKPROC( vkGetPhysicalDeviceQueueFamilyProperties2KHR       );
 DECL_VKPROC( vkGetPhysicalDeviceMemoryProperties2KHR            );
 DECL_VKPROC( vkGetPhysicalDeviceSparseImageFormatProperties2KHR );
 
+/* VK_KHR_sampler_ycbcr_conversion (also loaded from Vulkan 1.1 core) */
+
+DECL_VKPROC( vkCreateSamplerYcbcrConversionKHR  );
+DECL_VKPROC( vkDestroySamplerYcbcrConversionKHR );
+
+/* VK_KHR_external_semaphore_fd */
+
+#if VK_KHR_external_semaphore_fd
+DECL_VKPROC( vkImportSemaphoreFdKHR );
+#endif
+
+/* VK_ANDROID_external_memory_android_hardware_buffer */
+
+#if VK_ANDROID_external_memory_android_hardware_buffer
+DECL_VKPROC( vkGetAndroidHardwareBufferPropertiesANDROID );
+#endif
+
 
 
 // ================================================================================

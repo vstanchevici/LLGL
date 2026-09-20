@@ -38,6 +38,9 @@ VKPipelineLayout::VKPipelineLayout(VkDevice device, const PipelineLayoutDescript
     barrierFlags_               { desc.barrierFlags                    },
     flags_                      { 0                                    }
 {
+    /* Reserve storage for immutable samplers of combined texture-samplers, so pointers into this container remain valid */
+    ReserveCombinedImmutableSamplers(desc);
+
     /* Create Vulkan descriptor set layouts */
     if (!desc.heapBindings.empty())
         CreateDescriptorSetLayout(device, desc.heapBindings, bindingTable_.heapBindings, setLayoutHeapBindings_);
@@ -346,6 +349,8 @@ static VkDescriptorType GetVkDescriptorType(const BindingDescriptor& desc)
         case ResourceType::Texture:
             if ((desc.bindFlags & (BindFlags::Storage)) != 0)
                 return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            else if (desc.immutableSampler != nullptr)
+                return VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             else
                 return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
             break;
@@ -373,13 +378,13 @@ static VkDescriptorType GetVkDescriptorType(const BindingDescriptor& desc)
     VKTypes::MapFailed("ResourceType", "VkDescriptorType");
 }
 
-static void ConvertBindingDesc(VkDescriptorSetLayoutBinding& dst, const BindingDescriptor& src)
+static void ConvertBindingDesc(VkDescriptorSetLayoutBinding& dst, const BindingDescriptor& src, const VkSampler* immutableSamplers)
 {
     dst.binding             = src.slot.index;
     dst.descriptorType      = GetVkDescriptorType(src);
     dst.descriptorCount     = std::max(1u, src.arraySize);
     dst.stageFlags          = GetVkShaderStageFlags(src.stageFlags);
-    dst.pImmutableSamplers  = nullptr;
+    dst.pImmutableSamplers  = immutableSamplers;
 }
 
 static bool IsNonUniformBufferBinding(const BindingDescriptor& bindingDesc)
@@ -399,7 +404,7 @@ void VKPipelineLayout::CreateDescriptorSetLayout(
 
     for_range(i, numBindings)
     {
-        ConvertBindingDesc(setLayoutBindings[i], inBindings[i]);
+        ConvertBindingDesc(setLayoutBindings[i], inBindings[i], AppendCombinedImmutableSamplers(inBindings[i]));
 
         if (IsNonUniformBufferBinding(inBindings[i]))
             flags_ |= PSOLayoutFlag_HasNonUniformBuffers;
@@ -410,6 +415,41 @@ void VKPipelineLayout::CreateDescriptorSetLayout(
 
     /* Allocate slots for automatic */
     AllocateDescriptorBarriers(outBindings);
+}
+
+// Returns the number of immutable samplers that are required for combined texture-samplers in the specified bindings.
+static std::size_t CountCombinedImmutableSamplers(const std::vector<BindingDescriptor>& bindings)
+{
+    std::size_t n = 0;
+    for (const BindingDescriptor& binding : bindings)
+    {
+        if (binding.type == ResourceType::Texture && binding.immutableSampler != nullptr)
+            n += std::max(1u, binding.arraySize);
+    }
+    return n;
+}
+
+void VKPipelineLayout::ReserveCombinedImmutableSamplers(const PipelineLayoutDescriptor& desc)
+{
+    const std::size_t numSamplers = CountCombinedImmutableSamplers(desc.heapBindings) + CountCombinedImmutableSamplers(desc.bindings);
+    combinedImmutableSamplers_.reserve(numSamplers);
+}
+
+const VkSampler* VKPipelineLayout::AppendCombinedImmutableSamplers(const BindingDescriptor& binding)
+{
+    if (binding.type != ResourceType::Texture || binding.immutableSampler == nullptr)
+        return nullptr;
+
+    /* Container must have been reserved to not invalidate previous pointers */
+    const std::uint32_t numSamplers = std::max(1u, binding.arraySize);
+    LLGL_ASSERT(combinedImmutableSamplers_.size() + numSamplers <= combinedImmutableSamplers_.capacity());
+
+    /* Use the same sampler for all array elements of this binding */
+    auto* samplerVK = LLGL_CAST(VKSampler*, binding.immutableSampler);
+    const std::size_t first = combinedImmutableSamplers_.size();
+    combinedImmutableSamplers_.insert(combinedImmutableSamplers_.end(), numSamplers, samplerVK->GetVkSampler());
+
+    return &(combinedImmutableSamplers_[first]);
 }
 
 void VKPipelineLayout::AllocateDescriptorBarriers(std::vector<VKLayoutBinding>& bindings)

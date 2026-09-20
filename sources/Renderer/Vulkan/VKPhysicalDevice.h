@@ -34,8 +34,16 @@ class VKPhysicalDevice
         // Picks the physical Vulkan device by enumerating the available devices from the specified Vulkan instance.
         bool PickPhysicalDevice(VkInstance instance, const ArrayView<const char*>& supportedInstanceExtensions, long preferredDeviceFlags = 0);
 
-        // Loads the physical Vulkan device from a custom native handle.
-        void LoadPhysicalDeviceWeakRef(VkPhysicalDevice physicalDevice);
+        /*
+        Loads the physical Vulkan device from a custom native handle.
+        Since LLGL did not create the logical device in this case, the extensions and features that were enabled for the custom device
+        must be specified by the client (see RendererConfigurationVulkan::enabledDeviceExtensions and ::enabledDeviceFeatures).
+        */
+        void LoadPhysicalDeviceWeakRef(
+            VkPhysicalDevice                physicalDevice,
+            const ArrayView<const char*>&   enabledDeviceExtensions = {},
+            const void*                     enabledDeviceFeatures   = nullptr
+        );
 
         void QueryRendererInfo(RendererInfo& outInfo);
         void QueryRenderingCaps(RenderingCapabilities& outCaps);
@@ -45,8 +53,24 @@ class VKPhysicalDevice
 
         std::uint32_t FindMemoryType(std::uint32_t memoryTypeBits, VkMemoryPropertyFlags properties) const;
 
+        /*
+        Specifies the API version of the Vulkan instance this device is used with.
+        The effective API version is the minimum of the instance and device version, which determines what core functionality can be used.
+        This must be called before the physical device is picked or loaded.
+        */
+        inline void SetInstanceApiVersion(std::uint32_t apiVersion)
+        {
+            instanceApiVersion_ = apiVersion;
+        }
+
         // Returns true if the specified Vulkan extension is supported by this physical device.
         bool SupportsExtension(const char* extension) const;
+
+        // Returns true if the 'samplerYcbcrConversion' feature is enabled for the logical device.
+        inline bool IsSamplerYcbcrConversionEnabled() const
+        {
+            return isSamplerYcbcrConversionEnabled_;
+        }
 
         /* ----- Handles ----- */
 
@@ -100,6 +124,8 @@ class VKPhysicalDevice
     private:
 
         bool EnableExtensions(const char** extensions, bool required = false);
+        void EnableCustomDeviceExtensions(const ArrayView<const char*>& extensions);
+        void QueryCustomDeviceFeatures(const void* enabledDeviceFeatures);
 
         void QueryDeviceInfo();
         void QueryDeviceFeatures();
@@ -134,6 +160,13 @@ class VKPhysicalDevice
         #if VK_KHR_imageless_framebuffer
         VkPhysicalDeviceImagelessFramebufferFeaturesKHR         imagelessFramebufferFeatures_   = {};
         #endif
+
+        #if VK_KHR_sampler_ycbcr_conversion
+        VkPhysicalDeviceSamplerYcbcrConversionFeaturesKHR       samplerYcbcrConversionFeatures_ = {};
+        #endif
+
+        std::uint32_t                                           instanceApiVersion_             = VK_API_VERSION_1_0;
+        bool                                                    isSamplerYcbcrConversionEnabled_ = false;
 
 };
 

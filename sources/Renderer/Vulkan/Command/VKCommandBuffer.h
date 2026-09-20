@@ -60,6 +60,13 @@ class VKCommandBuffer final : public CommandBuffer
         // i.e. it won't need another signal for the next submission.
         VkFence GetQueueSubmitFenceAndFlush();
 
+        // Submits the current native command buffer to the specified queue.
+        // The submission waits on all semaphores that were imported by AcquireExternalTexture since the last submission.
+        VkResult SubmitToQueue(VkQueue queue);
+
+        void AcquireExternalTexture(Texture& texture, long long nativeFence) override;
+        void ReleaseExternalTexture(Texture& texture) override;
+
         // Returns the native VkCommandBuffer object.
         inline VkCommandBuffer GetVkCommandBuffer() const
         {
@@ -135,6 +142,12 @@ class VKCommandBuffer final : public CommandBuffer
 
         void BindVertexBuffer(VKBuffer& bufferVK);
 
+        // Makes the next submission wait on the specified sync file descriptor. Ownership of the descriptor is transferred.
+        void ImportWaitSemaphoreFromSyncFd(int syncFd);
+
+        // Returns the queue family index for ownership transfers of external resources.
+        std::uint32_t GetExternalQueueFamilyIndex() const;
+
     private:
 
         // Returns the number of native Vulkan command buffers used for the specified descriptor.
@@ -197,6 +210,11 @@ class VKCommandBuffer final : public CommandBuffer
         VkSubpassContents               subpassContents_                                = VK_SUBPASS_CONTENTS_INLINE;
 
         std::uint32_t                   queuePresentFamily_                             = 0;
+        std::uint32_t                   queueGraphicsFamily_                            = 0;
+
+        std::vector<VKPtr<VkSemaphore>> waitSemaphoresArray_[maxNumCommandBuffers];     // Semaphores in flight for each native command buffer
+        std::vector<VkSemaphore>        pendingWaitSemaphores_;                         // Semaphores the next submission must wait on
+        std::vector<VkPipelineStageFlags> pendingWaitStageMasks_;
 
         bool                            scissorEnabled_                                 = false;
         bool                            hasDynamicScissorRect_                          = false;

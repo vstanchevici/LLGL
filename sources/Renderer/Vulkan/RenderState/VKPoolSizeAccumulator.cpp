@@ -21,9 +21,16 @@ static std::uint32_t GetPoolIndex(VkDescriptorType type)
     return static_cast<std::uint32_t>(type);
 }
 
+// Maximum number of descriptors a combined image sampler can consume.
+// Combined image samplers with a Y'CbCr conversion consume up to one descriptor per plane (see VkSamplerYcbcrConversionImageFormatProperties::combinedImageSamplerDescriptorCount).
+// This upper bound is used for all combined image samplers instead of querying the exact count per format, which only over-allocates a few descriptors.
+static constexpr std::uint32_t g_maxCombinedImageSamplerDescriptorCount = 3;
+
 void VKPoolSizeAccumulator::Accumulate(VkDescriptorType type, std::uint32_t count)
 {
     const std::uint32_t poolIndex = GetPoolIndex(type);
+    if (type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+        count *= g_maxCombinedImageSamplerDescriptorCount;
     countsPerType_[poolIndex] += count;
 }
 

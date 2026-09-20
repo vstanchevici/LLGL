@@ -85,6 +85,7 @@ enum GLOpcode : std::uint8_t
     GLOpcodeMemoryBarrier,
     GLOpcodePushDebugGroup,
     GLOpcodePopDebugGroup,
+    GLOpcodeWaitNativeFence,
 };
 
 

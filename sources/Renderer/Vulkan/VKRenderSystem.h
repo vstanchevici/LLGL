@@ -60,6 +60,8 @@ class VKRenderSystem final : public RenderSystem
         VKRenderSystem(const RenderSystemDescriptor& renderSystemDesc);
         ~VKRenderSystem();
 
+        bool QueryExternalImageProperties(const ExternalImageDescriptor& externalImageDesc, ExternalImageProperties& outProperties) override;
+
     public:
 
         inline bool IsBreakOnErrorEnabled() const
@@ -76,7 +78,11 @@ class VKRenderSystem final : public RenderSystem
         void QuerySupportedInstanceExtensions();
         void CreateInstance(const RendererConfigurationVulkan* config);
         void CreateDebugReportCallback();
-        bool PickPhysicalDevice(long preferredDeviceFlags, VkPhysicalDevice customPhysicalDevice = VK_NULL_HANDLE);
+        bool PickPhysicalDevice(
+            long                                preferredDeviceFlags,
+            VkPhysicalDevice                    customPhysicalDevice    = VK_NULL_HANDLE,
+            const RendererConfigurationVulkan*  config                  = nullptr
+        );
         void CreateLogicalDevice(VkDevice customLogicalDevice = VK_NULL_HANDLE);
 
         bool IsLayerRequired(const char* name, const RendererConfigurationVulkan* config) const;
@@ -101,6 +107,10 @@ class VKRenderSystem final : public RenderSystem
         VkCommandBuffer AllocCommandBuffer(bool begin = true);
         void FlushCommandBuffer(VkCommandBuffer commandBuffer);
 
+        Texture* CreateExternalTexture(const TextureDescriptor& textureDesc);
+        Texture* CreateMultiPlanarTexture(const TextureDescriptor& textureDesc, const ImageView* initialImage);
+        void WriteMultiPlanarTexture(VKTexture& textureVK, const TextureRegion& textureRegion, const ImageView& srcImageView);
+
     private:
 
         /* ----- Common objects ----- */
@@ -109,6 +119,7 @@ class VKRenderSystem final : public RenderSystem
         std::vector<VkExtensionProperties>      instanceExtensionProperties_;
         std::vector<const char*>                supportedInstanceExtensions_;
 
+        std::uint32_t                           instanceApiVersion_     = VK_API_VERSION_1_0;
         VKPhysicalDevice                        physicalDevice_;
         VKDevice                                device_;
         VKCommandContext                        context_;
@@ -118,6 +129,7 @@ class VKRenderSystem final : public RenderSystem
         VKPtr<VkDebugReportCallbackEXT>         debugReportCallback_;
 
         std::unique_ptr<VKDeviceMemoryManager>  deviceMemoryMngr_;
+        std::unique_ptr<VKYcbcrConversionPool>  ycbcrConversionPool_;
 
         VKGraphicsPipelineLimits                graphicsPipelineLimits_;
 

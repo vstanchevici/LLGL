@@ -101,7 +101,7 @@ static int CompareSetLayoutBindingSWO(const VkDescriptorSetLayoutBinding& lhs, c
     LLGL_COMPARE_MEMBER_SWO( descriptorType     );
     LLGL_COMPARE_MEMBER_SWO( descriptorCount    );
     LLGL_COMPARE_MEMBER_SWO( stageFlags         );
-  //LLGL_COMPARE_MEMBER_SWO( pImmutableSamplers );
+    LLGL_COMPARE_MEMBER_SWO( pImmutableSamplers ); // Pointers into the owning pipeline layout; identical for permutations of the same layout
     return 0;
 }
 

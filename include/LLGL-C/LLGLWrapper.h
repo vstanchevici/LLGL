@@ -186,6 +186,9 @@ typedef enum LLGLFormat
     LLGLFormatETC1UNorm,
     LLGLFormatETC2UNorm,
     LLGLFormatETC2UNorm_sRGB,
+    LLGLFormatNV12,
+    LLGLFormatP010,
+    LLGLFormatYUV420P,
 }
 LLGLFormat;
 
@@ -735,6 +738,30 @@ typedef enum LLGLSamplerFilter
 }
 LLGLSamplerFilter;
 
+typedef enum LLGLYcbcrModel
+{
+    LLGLYcbcrModelRGBIdentity,
+    LLGLYcbcrModelYcbcrIdentity,
+    LLGLYcbcrModelYcbcr709,
+    LLGLYcbcrModelYcbcr601,
+    LLGLYcbcrModelYcbcr2020,
+}
+LLGLYcbcrModel;
+
+typedef enum LLGLYcbcrRange
+{
+    LLGLYcbcrRangeFull,
+    LLGLYcbcrRangeNarrow,
+}
+LLGLYcbcrRange;
+
+typedef enum LLGLChromaLocation
+{
+    LLGLChromaLocationCositedEven,
+    LLGLChromaLocationMidpoint,
+}
+LLGLChromaLocation;
+
 typedef enum LLGLShaderType
 {
     LLGLShaderTypeUndefined,
@@ -820,6 +847,13 @@ typedef enum LLGLTextureSwizzle
 }
 LLGLTextureSwizzle;
 
+typedef enum LLGLExternalImageType
+{
+    LLGLExternalImageTypeUndefined,
+    LLGLExternalImageTypeAndroidHardwareBuffer,
+}
+LLGLExternalImageType;
+
 
 /* ----- Flags ----- */
 
@@ -866,6 +900,7 @@ typedef enum LLGLFormatFlags
     LLGLFormatSupportsTexture3D    = (1 << 13),
     LLGLFormatSupportsTextureCube  = (1 << 14),
     LLGLFormatSupportsVertex       = (1 << 15),
+    LLGLFormatIsMultiPlanar        = (1 << 16),
     LLGLFormatIsUnsignedInteger    = (LLGLFormatIsUnsigned | LLGLFormatIsInteger),
     LLGLFormatHasDepthStencil      = (LLGLFormatHasDepth | LLGLFormatHasStencil),
 }
@@ -1250,6 +1285,8 @@ typedef struct LLGLRenderingFeatures
     bool hasPipelineCaching;           /* = false */
     bool hasPipelineStatistics;        /* = false */
     bool hasRenderCondition;           /* = false */
+    bool hasSamplerYcbcrConversion;    /* = false */
+    bool hasExternalImageAndroid;      /* = false */
 }
 LLGLRenderingFeatures;
 
@@ -1415,11 +1452,12 @@ LLGLImageView;
 typedef struct LLGLBindingDescriptor
 {
     const char*      name;
-    LLGLResourceType type;       /* = LLGLResourceTypeUndefined */
-    long             bindFlags;  /* = 0 */
-    long             stageFlags; /* = 0 */
+    LLGLResourceType type;             /* = LLGLResourceTypeUndefined */
+    long             bindFlags;        /* = 0 */
+    long             stageFlags;       /* = 0 */
     LLGLBindingSlot  slot;
-    uint32_t         arraySize;  /* = 0 */
+    uint32_t         arraySize;        /* = 0 */
+    LLGLSampler      immutableSampler; /* = LLGL_NULL_OBJECT */
 }
 LLGLBindingDescriptor;
 
@@ -1561,26 +1599,6 @@ typedef struct LLGLAttachmentDescriptor
 }
 LLGLAttachmentDescriptor;
 
-typedef struct LLGLSamplerDescriptor
-{
-    const char*            debugName;      /* = NULL */
-    LLGLSamplerAddressMode addressModeU;   /* = LLGLSamplerAddressModeRepeat */
-    LLGLSamplerAddressMode addressModeV;   /* = LLGLSamplerAddressModeRepeat */
-    LLGLSamplerAddressMode addressModeW;   /* = LLGLSamplerAddressModeRepeat */
-    LLGLSamplerFilter      minFilter;      /* = LLGLSamplerFilterLinear */
-    LLGLSamplerFilter      magFilter;      /* = LLGLSamplerFilterLinear */
-    LLGLSamplerFilter      mipMapFilter;   /* = LLGLSamplerFilterLinear */
-    bool                   mipMapEnabled;  /* = true */
-    float                  mipMapLODBias;  /* = 0.0f */
-    float                  minLOD;         /* = 0.0f */
-    float                  maxLOD;         /* = 1000.0f */
-    uint32_t               maxAnisotropy;  /* = 1 */
-    bool                   compareEnabled; /* = false */
-    LLGLCompareOp          compareOp;      /* = LLGLCompareOpLess */
-    float                  borderColor[4]; /* = {0.0f,0.0f,0.0f,0.0f} */
-}
-LLGLSamplerDescriptor;
-
 typedef struct LLGLComputeShaderAttributes
 {
     LLGLExtent3D workGroupSize; /* = {1,1,1} */
@@ -1600,6 +1618,13 @@ typedef struct LLGLSwapChainDescriptor
     bool         resizable;   /* = false */
 }
 LLGLSwapChainDescriptor;
+
+typedef struct LLGLExternalImageDescriptor
+{
+    LLGLExternalImageType type;   /* = LLGLExternalImageTypeUndefined */
+    void*                 handle; /* = NULL */
+}
+LLGLExternalImageDescriptor;
 
 typedef struct LLGLTextureSwizzleRGBA
 {
@@ -1625,22 +1650,6 @@ typedef struct LLGLTextureRegion
     LLGLExtent3D           extent;
 }
 LLGLTextureRegion;
-
-typedef struct LLGLTextureDescriptor
-{
-    const char*     debugName;      /* = NULL */
-    LLGLTextureType type;           /* = LLGLTextureTypeTexture2D */
-    long            bindFlags;      /* = (LLGLBindSampled | LLGLBindColorAttachment) */
-    long            cpuAccessFlags; /* = (LLGLCPUAccessRead | LLGLCPUAccessWrite) */
-    long            miscFlags;      /* = (LLGLMiscFixedSamples | LLGLMiscGenerateMips) */
-    LLGLFormat      format;         /* = LLGLFormatRGBA8UNorm */
-    LLGLExtent3D    extent;         /* = {1,1,1} */
-    uint32_t        arrayLayers;    /* = 1 */
-    uint32_t        mipLevels;      /* = 0 */
-    uint32_t        samples;        /* = 1 */
-    LLGLClearValue  clearValue;
-}
-LLGLTextureDescriptor;
 
 typedef struct LLGLVertexAttribute
 {
@@ -1680,15 +1689,6 @@ typedef struct LLGLBufferDescriptor
     const LLGLVertexAttribute* vertexAttribs;    /* = NULL */
 }
 LLGLBufferDescriptor;
-
-typedef struct LLGLStaticSamplerDescriptor
-{
-    const char*           name;
-    long                  stageFlags; /* = 0 */
-    LLGLBindingSlot       slot;
-    LLGLSamplerDescriptor sampler;
-}
-LLGLStaticSamplerDescriptor;
 
 typedef struct LLGLStencilDescriptor
 {
@@ -1733,6 +1733,20 @@ typedef struct LLGLRenderTargetDescriptor
 }
 LLGLRenderTargetDescriptor;
 
+typedef struct LLGLYcbcrConversionDescriptor
+{
+    LLGLFormat             format;                      /* = LLGLFormatUndefined */
+    uint64_t               externalFormat;              /* = 0 */
+    LLGLYcbcrModel         model;                       /* = LLGLYcbcrModelYcbcr709 */
+    LLGLYcbcrRange         range;                       /* = LLGLYcbcrRangeNarrow */
+    LLGLChromaLocation     xChromaOffset;               /* = LLGLChromaLocationMidpoint */
+    LLGLChromaLocation     yChromaOffset;               /* = LLGLChromaLocationMidpoint */
+    LLGLSamplerFilter      chromaFilter;                /* = LLGLSamplerFilterLinear */
+    LLGLTextureSwizzleRGBA swizzle;
+    bool                   forceExplicitReconstruction; /* = false */
+}
+LLGLYcbcrConversionDescriptor;
+
 typedef struct LLGLVertexShaderAttributes
 {
     size_t                     numInputAttribs;  /* = 0 */
@@ -1765,23 +1779,6 @@ typedef struct LLGLTextureViewDescriptor
     LLGLTextureSwizzleRGBA swizzle;
 }
 LLGLTextureViewDescriptor;
-
-typedef struct LLGLPipelineLayoutDescriptor
-{
-    const char*                                 debugName;                  /* = NULL */
-    size_t                                      numHeapBindings;            /* = 0 */
-    const LLGLBindingDescriptor*                heapBindings;               /* = NULL */
-    size_t                                      numBindings;                /* = 0 */
-    const LLGLBindingDescriptor*                bindings;                   /* = NULL */
-    size_t                                      numStaticSamplers;          /* = 0 */
-    const LLGLStaticSamplerDescriptor*          staticSamplers;             /* = NULL */
-    size_t                                      numUniforms;                /* = 0 */
-    const LLGLUniformDescriptor*                uniforms;                   /* = NULL */
-    size_t                                      numCombinedTextureSamplers; /* = 0 */
-    const LLGLCombinedTextureSamplerDescriptor* combinedTextureSamplers;    /* = NULL */
-    long                                        barrierFlags;               /* = 0 */
-}
-LLGLPipelineLayoutDescriptor;
 
 typedef struct LLGLGraphicsPipelineDescriptor
 {
@@ -1827,6 +1824,16 @@ typedef struct LLGLMeshPipelineDescriptor
 }
 LLGLMeshPipelineDescriptor;
 
+typedef struct LLGLExternalImageProperties
+{
+    LLGLExtent3D                  extent;
+    LLGLFormat                    format;                     /* = LLGLFormatUndefined */
+    LLGLYcbcrConversionDescriptor ycbcrConversion;
+    bool                          requiresYcbcr;              /* = false */
+    bool                          supportsLinearChromaFilter; /* = false */
+}
+LLGLExternalImageProperties;
+
 typedef struct LLGLResourceViewDescriptor
 {
     LLGLResource              resource;     /* = LLGL_NULL_OBJECT */
@@ -1835,6 +1842,27 @@ typedef struct LLGLResourceViewDescriptor
     uint32_t                  initialCount; /* = 0 */
 }
 LLGLResourceViewDescriptor;
+
+typedef struct LLGLSamplerDescriptor
+{
+    const char*                          debugName;       /* = NULL */
+    LLGLSamplerAddressMode               addressModeU;    /* = LLGLSamplerAddressModeRepeat */
+    LLGLSamplerAddressMode               addressModeV;    /* = LLGLSamplerAddressModeRepeat */
+    LLGLSamplerAddressMode               addressModeW;    /* = LLGLSamplerAddressModeRepeat */
+    LLGLSamplerFilter                    minFilter;       /* = LLGLSamplerFilterLinear */
+    LLGLSamplerFilter                    magFilter;       /* = LLGLSamplerFilterLinear */
+    LLGLSamplerFilter                    mipMapFilter;    /* = LLGLSamplerFilterLinear */
+    bool                                 mipMapEnabled;   /* = true */
+    float                                mipMapLODBias;   /* = 0.0f */
+    float                                minLOD;          /* = 0.0f */
+    float                                maxLOD;          /* = 1000.0f */
+    uint32_t                             maxAnisotropy;   /* = 1 */
+    bool                                 compareEnabled;  /* = false */
+    LLGLCompareOp                        compareOp;       /* = LLGLCompareOpLess */
+    float                                borderColor[4];  /* = {0.0f,0.0f,0.0f,0.0f} */
+    const LLGLYcbcrConversionDescriptor* ycbcrConversion; /* = NULL */
+}
+LLGLSamplerDescriptor;
 
 typedef struct LLGLShaderDescriptor
 {
@@ -1864,6 +1892,50 @@ typedef struct LLGLShaderReflection
     LLGLComputeShaderAttributes         compute;
 }
 LLGLShaderReflection;
+
+typedef struct LLGLTextureDescriptor
+{
+    const char*                          debugName;       /* = NULL */
+    LLGLTextureType                      type;            /* = LLGLTextureTypeTexture2D */
+    long                                 bindFlags;       /* = (LLGLBindSampled | LLGLBindColorAttachment) */
+    long                                 cpuAccessFlags;  /* = (LLGLCPUAccessRead | LLGLCPUAccessWrite) */
+    long                                 miscFlags;       /* = (LLGLMiscFixedSamples | LLGLMiscGenerateMips) */
+    LLGLFormat                           format;          /* = LLGLFormatRGBA8UNorm */
+    LLGLExtent3D                         extent;          /* = {1,1,1} */
+    uint32_t                             arrayLayers;     /* = 1 */
+    uint32_t                             mipLevels;       /* = 0 */
+    uint32_t                             samples;         /* = 1 */
+    LLGLClearValue                       clearValue;
+    const LLGLExternalImageDescriptor*   external;        /* = NULL */
+    const LLGLYcbcrConversionDescriptor* ycbcrConversion; /* = NULL */
+}
+LLGLTextureDescriptor;
+
+typedef struct LLGLStaticSamplerDescriptor
+{
+    const char*           name;
+    long                  stageFlags; /* = 0 */
+    LLGLBindingSlot       slot;
+    LLGLSamplerDescriptor sampler;
+}
+LLGLStaticSamplerDescriptor;
+
+typedef struct LLGLPipelineLayoutDescriptor
+{
+    const char*                                 debugName;                  /* = NULL */
+    size_t                                      numHeapBindings;            /* = 0 */
+    const LLGLBindingDescriptor*                heapBindings;               /* = NULL */
+    size_t                                      numBindings;                /* = 0 */
+    const LLGLBindingDescriptor*                bindings;                   /* = NULL */
+    size_t                                      numStaticSamplers;          /* = 0 */
+    const LLGLStaticSamplerDescriptor*          staticSamplers;             /* = NULL */
+    size_t                                      numUniforms;                /* = 0 */
+    const LLGLUniformDescriptor*                uniforms;                   /* = NULL */
+    size_t                                      numCombinedTextureSamplers; /* = 0 */
+    const LLGLCombinedTextureSamplerDescriptor* combinedTextureSamplers;    /* = NULL */
+    long                                        barrierFlags;               /* = 0 */
+}
+LLGLPipelineLayoutDescriptor;
 
 
 #endif /* LLGL_C99_LLGLWRAPPER_H */

@@ -12,6 +12,7 @@
 #include <LLGL/Export.h>
 #include <LLGL/CommandBufferFlags.h>
 #include <LLGL/TextureFlags.h>
+#include <LLGL/SamplerFlags.h>
 #include <LLGL/Constants.h>
 #include <LLGL/RendererConfiguration.h>
 #include <LLGL/Container/UTF8String.h>
@@ -676,6 +677,22 @@ struct RenderingFeatures
     \see CommandBuffer:BeginRenderCondition
     */
     bool hasRenderCondition             = false;
+
+    /**
+    \brief Specifies whether Y'CbCr sampler conversions and multi-planar formats are supported.
+    \see YcbcrConversionDescriptor
+    \see SamplerDescriptor::ycbcrConversion
+    \see TextureDescriptor::ycbcrConversion
+    */
+    bool hasSamplerYcbcrConversion      = false;
+
+    /**
+    \brief Specifies whether external images of type ExternalImageType::AndroidHardwareBuffer can be imported.
+    \see ExternalImageDescriptor
+    \see TextureDescriptor::external
+    \see RenderSystem::QueryExternalImageProperties
+    */
+    bool hasExternalImageAndroid        = false;
 };
 
 /**
@@ -905,6 +922,33 @@ struct RenderingCapabilities
     \remarks Especially with OpenGL these features can vary between different hardware and GL versions.
     */
     RenderingLimits                 limits;
+};
+
+/**
+\brief Properties of an external image.
+\see RenderSystem::QueryExternalImageProperties
+\see ExternalImageDescriptor
+*/
+struct ExternalImageProperties
+{
+    //! Extent of the external image. Depth is always 1.
+    Extent3D                    extent;
+
+    //! Hardware format of the external image, or Format::Undefined if the format is opaque and can only be sampled with a Y'CbCr conversion.
+    Format                      format                      = Format::Undefined;
+
+    /**
+    \brief Y'CbCr conversion that is suggested by the driver for this external image.
+    \remarks This contains the opaque external format as well as the color model, range, and chroma offsets.
+    Pass this to SamplerDescriptor::ycbcrConversion and TextureDescriptor::ycbcrConversion when \c requiresYcbcr is true.
+    */
+    YcbcrConversionDescriptor   ycbcrConversion;
+
+    //! Specifies whether the external image must be sampled with a Y'CbCr conversion.
+    bool                        requiresYcbcr               = false;
+
+    //! Specifies whether the Y'CbCr conversion supports SamplerFilter::Linear for chroma reconstruction.
+    bool                        supportsLinearChromaFilter  = false;
 };
 
 

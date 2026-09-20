@@ -180,6 +180,12 @@ class VKPipelineLayout final : public PipelineLayout
 
         void AllocateDescriptorBarriers(std::vector<VKLayoutBinding>& bindings);
 
+        // Reserves storage for all immutable samplers of combined texture-samplers (see BindingDescriptor::immutableSampler).
+        void ReserveCombinedImmutableSamplers(const PipelineLayoutDescriptor& desc);
+
+        // Appends the immutable samplers for the specified binding and returns a pointer to them, or null if the binding has no immutable sampler.
+        const VkSampler* AppendCombinedImmutableSamplers(const BindingDescriptor& binding);
+
         void CreateImmutableSamplers(
             VkDevice                                    device,
             const ArrayView<StaticSamplerDescriptor>&   staticSamplers
@@ -226,6 +232,7 @@ class VKPipelineLayout final : public PipelineLayout
 
         VKLayoutBindingTable                bindingTable_;
         std::vector<VKPtr<VkSampler>>       immutableSamplers_;
+        std::vector<VkSampler>              combinedImmutableSamplers_; // Weak references to samplers of combined texture-samplers; referenced by VkDescriptorSetLayoutBinding::pImmutableSamplers
         std::vector<UniformDescriptor>      uniformDescs_;
 
         VKPipelineBarrierPtr                barrier_;

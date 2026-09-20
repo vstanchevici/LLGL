@@ -11,6 +11,7 @@
 
 #include <LLGL/Texture.h>
 #include "VKDeviceImage.h"
+#include "VKYcbcrConversionPool.h"
 #include "../Vulkan.h"
 #include "../VKPtr.h"
 #include <cstdint>
@@ -40,11 +41,15 @@ class VKTexture final : public Texture
 
     public:
 
+        // Creates a texture. If TextureDescriptor::ycbcrConversion is non-null, the conversion is acquired from the specified pool.
         VKTexture(
             VkDevice                    device,
             VKDeviceMemoryManager&      deviceMemoryMngr,
-            const TextureDescriptor&    desc
+            const TextureDescriptor&    desc,
+            VKYcbcrConversionPool*      ycbcrConversionPool = nullptr
         );
+
+        ~VKTexture();
 
     public:
 
@@ -206,14 +211,41 @@ class VKTexture final : public Texture
             image_.OverrideVkImageLayout(layout);
         }
 
+        // Returns the Y'CbCr conversion of this texture or null if this texture has no conversion.
+        inline VKYcbcrConversion* GetYcbcrConversion() const
+        {
+            return ycbcrConversion_.get();
+        }
+
+        // Returns true if this texture has a multi-planar format, e.g. VK_FORMAT_G8_B8R8_2PLANE_420_UNORM.
+        bool IsMultiPlanar() const;
+
+        // Returns true if this texture was created from an external image (see TextureDescriptor::external).
+        inline bool IsExternal() const
+        {
+            return isExternal_;
+        }
 
     private:
 
         void CreateImage(VkDevice device, const TextureDescriptor& desc);
 
+        // Imports the external image and allocates dedicated memory for it (see TextureDescriptor::external).
+        void CreateExternalImage(VkDevice device, const TextureDescriptor& desc, VKYcbcrConversionPool* ycbcrConversionPool);
+
+        // Releases the reference to the external image handle.
+        void ReleaseExternalHandle();
+
+        // Initializes the Y'CbCr conversion info structure to be chained into image view create infos. Returns null if this texture has no conversion.
+        const void* GetYcbcrConversionInfo(VkSamplerYcbcrConversionInfo& outInfo) const;
+
     private:
 
         VkDevice                device_             = VK_NULL_HANDLE;
+        VKYcbcrConversionSPtr   ycbcrConversion_;                           // Must outlive the image views
+        VKPtr<VkDeviceMemory>   externalMemory_;                            // Dedicated memory for external images; must outlive the image
+        void*                   externalHandle_     = nullptr;              // Reference to the external image handle, e.g. AHardwareBuffer*
+        bool                    isExternal_         = false;
         VKDeviceImage           image_;
         VKPtr<VkImageView>      imageView_;
 

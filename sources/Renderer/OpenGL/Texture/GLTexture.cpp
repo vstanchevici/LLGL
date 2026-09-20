@@ -26,6 +26,10 @@
 #include <LLGL/Utils/ForRange.h>
 #include <LLGL/Backend/OpenGL/NativeHandle.h>
 
+#if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+#   include "../Platform/Android/AndroidGLHardwareBuffer.h"
+#endif
+
 
 namespace LLGL
 {
@@ -79,10 +83,11 @@ static GLSwizzleFormat MapToGLSwizzleFormat(const Format format)
 }
 
 GLTexture::GLTexture(const TextureDescriptor& desc) :
-    Texture         { desc.type, desc.bindFlags                },
-    numMipLevels_   { static_cast<GLsizei>(NumMipLevels(desc)) },
-    isRenderbuffer_ { IsRenderbufferSufficient(desc)           },
-    swizzleFormat_  { MapToGLSwizzleFormat(desc.format)        }
+    Texture         { desc.type, desc.bindFlags                                                         },
+    isExternal_     { (desc.external != nullptr)                                                        },
+    numMipLevels_   { (desc.external != nullptr ? 1 : static_cast<GLsizei>(NumMipLevels(desc)))         },
+    isRenderbuffer_ { (desc.external == nullptr && IsRenderbufferSufficient(desc))                      },
+    swizzleFormat_  { (desc.external != nullptr ? GLSwizzleFormat::RGBA : MapToGLSwizzleFormat(desc.format)) }
 {
     if (IsRenderbuffer())
     {
@@ -131,6 +136,17 @@ GLTexture::~GLTexture()
 {
     if (isExternalHandle_)
         return;
+
+    if (IsExternal())
+    {
+        /* Delete texture before its EGLImage, then release reference to the external image */
+        GLStateManager::Get().DeleteTexture(id_, GLTextureTarget::TextureExternalOES);
+        #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+        AndroidGLDestroyImage(externalImage_);
+        AndroidGLReleaseHardwareBuffer(static_cast<AHardwareBuffer*>(externalHandle_));
+        #endif
+        return;
+    }
 
     if (IsRenderbuffer())
     {
@@ -1209,7 +1225,50 @@ void GLTexture::GetTextureSubImage(const TextureRegion& region, const MutableIma
 
 GLenum GLTexture::GetGLTexTarget() const
 {
+    if (IsExternal())
+        return GL_TEXTURE_EXTERNAL_OES;
     return GLTypes::Map(GetType());
+}
+
+GLTextureTarget GLTexture::GetGLTextureTarget() const
+{
+    if (IsExternal())
+        return GLTextureTarget::TextureExternalOES;
+    return GLStateManager::GetTextureTarget(GetType());
+}
+
+void GLTexture::BindAndImportExternalImage(const ExternalImageDescriptor& externalImageDesc)
+{
+    #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+
+    if (externalImageDesc.type != ExternalImageType::AndroidHardwareBuffer || externalImageDesc.handle == nullptr)
+        LLGL_TRAP("cannot create GL texture from external image with null handle or unsupported type");
+
+    auto* buffer = static_cast<AHardwareBuffer*>(externalImageDesc.handle);
+
+    /* Bind texture to external target and attach EGLImage of hardware buffer */
+    GLStateManager::Get().BindTexture(GLTextureTarget::TextureExternalOES, id_);
+
+    externalImage_ = AndroidGLAttachHardwareBufferToBoundTexture(buffer, externalExtent_);
+    if (externalImage_ == nullptr)
+        LLGL_TRAP("failed to import Android hardware buffer as external GL texture");
+
+    /* Keep a reference to the hardware buffer as long as this texture is alive */
+    AndroidGLAcquireHardwareBuffer(buffer);
+    externalHandle_ = buffer;
+
+    /* External textures only support linear/nearest filters without MIP-maps and clamp-to-edge wrap modes */
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    #else // LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+
+    (void)externalImageDesc;
+    LLGL_TRAP("external images are not supported by the OpenGL backend on this platform");
+
+    #endif // /LLGL_GLEXT_EGL_IMAGE_EXTERNAL
 }
 
 GLenum GLTexture::GetGLTexLevelTarget() const
@@ -1373,6 +1432,20 @@ void GLTexture::GetParams(GLint* extent, GLint* samples) const
 
 void GLTexture::GetTextureParams(GLint* extent, GLint* samples) const
 {
+    if (IsExternal())
+    {
+        /* External textures cannot be queried with glGetTexLevelParameter, so return the dimensions of the external image */
+        if (extent != nullptr)
+        {
+            extent[0] = externalExtent_[0];
+            extent[1] = externalExtent_[1];
+            extent[2] = 1;
+        }
+        if (samples != nullptr)
+            *samples = 1;
+        return;
+    }
+
     #if LLGL_GLEXT_GET_TEX_LEVEL_PARAMETER
 
     #if LLGL_GLEXT_DIRECT_STATE_ACCESS
@@ -1472,6 +1545,15 @@ void GLTexture::GetRenderbufferParams(GLint* extent, GLint* samples) const
 
 void GLTexture::GetTextureMipSize(GLint level, GLint (&texSize)[3]) const
 {
+    if (IsExternal())
+    {
+        /* External textures only have a single MIP-map level */
+        texSize[0] = (level == 0 ? externalExtent_[0] : 0);
+        texSize[1] = (level == 0 ? externalExtent_[1] : 0);
+        texSize[2] = (level == 0 ? 1 : 0);
+        return;
+    }
+
     #if LLGL_GLEXT_GET_TEX_LEVEL_PARAMETER
 
     #if LLGL_GLEXT_DIRECT_STATE_ACCESS

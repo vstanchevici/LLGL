@@ -110,6 +110,23 @@ class VKCommandContext
             const VkBufferImageCopy&    region
         );
 
+        /*
+        Copies the source buffer into all planes of a multi-planar destination image, e.g. VK_FORMAT_G8_B8R8_2PLANE_420_UNORM.
+        The planes must be tightly packed one after another in the source buffer, starting at offset 0.
+        The offset and extent refer to the first plane (luma) and are divided by the subsampling factors for the other planes.
+        Returns the number of bytes that were read from the source buffer or 0 if the format is not supported.
+        */
+        VkDeviceSize CopyBufferToMultiPlanarImage(
+            VkBuffer                    srcBuffer,
+            VkImage                     dstImage,
+            VkFormat                    format,
+            const VkOffset3D&           offset,
+            const VkExtent3D&           extent
+        );
+
+        // Returns the size (in bytes) of tightly packed image data for all planes of the specified multi-planar format and extent.
+        static VkDeviceSize GetMultiPlanarImageDataSize(VkFormat format, const VkExtent3D& extent);
+
         // Copies the source image into the destination buffer (numMipLevels must be 1).
         void CopyImageToBuffer(
             VkImage                     srcImage,

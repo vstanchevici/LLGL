@@ -39,6 +39,10 @@
 #include <algorithm>
 #include <string.h>
 
+#if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+#   include "../Platform/Android/AndroidGLHardwareBuffer.h"
+#endif
+
 #include <LLGL/Backend/OpenGL/NativeCommand.h>
 
 
@@ -524,6 +528,15 @@ static std::size_t ExecuteGLCommand(const GLOpcode opcode, const void* pc, GLSta
             glPopDebugGroup();
             #endif
             return 0;
+        }
+        case GLOpcodeWaitNativeFence:
+        {
+            auto cmd = static_cast<const GLCmdWaitNativeFence*>(pc);
+            #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+            /* Consume the sync file descriptor, so it is neither waited on nor closed again if this command buffer is submitted again */
+            AndroidGLWaitNativeFence(cmd->nativeFence->Take());
+            #endif
+            return sizeof(*cmd);
         }
         default:
             return 0;

@@ -55,7 +55,10 @@ GLDeferredCommandBuffer::GLDeferredCommandBuffer(long flags, std::size_t initial
 
 void GLDeferredCommandBuffer::Begin()
 {
-    /* Reset internal command buffer */
+    /* Reset internal command buffer; this closes all sync file descriptors that have not been consumed by a submission */
+    #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+    nativeFences_.clear();
+    #endif
     buffer_.Clear();
     ResetRenderState();
 }
@@ -223,6 +226,34 @@ void GLDeferredCommandBuffer::CopyTextureFromFramebuffer(
         cmd->extent.width   = dstRegion.extent.width;
         cmd->extent.height  = dstRegion.extent.height;
     }
+}
+
+/* ----- External textures ----- */
+
+void GLDeferredCommandBuffer::AcquireExternalTexture(Texture& texture, long long nativeFence)
+{
+    /* Wait on the producer's fence when the command buffer is executed (see GLImmediateCommandBuffer::AcquireExternalTexture) */
+    if (nativeFence >= 0)
+    {
+        #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+        (void)texture;
+
+        /* The command buffer owns the file descriptor until it is consumed by the execution of this command */
+        nativeFences_.push_back(std::make_shared<GLNativeFence>(static_cast<int>(nativeFence)));
+
+        auto cmd = AllocCommand<GLCmdWaitNativeFence>(GLOpcodeWaitNativeFence);
+        {
+            cmd->nativeFence = nativeFences_.back().get();
+        }
+        #else
+        CommandBuffer::AcquireExternalTexture(texture, nativeFence);
+        #endif
+    }
+}
+
+void GLDeferredCommandBuffer::ReleaseExternalTexture(Texture& /*texture*/)
+{
+    // dummy
 }
 
 void GLDeferredCommandBuffer::GenerateMips(Texture& texture)

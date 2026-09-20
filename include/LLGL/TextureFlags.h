@@ -95,8 +95,45 @@ enum class TextureSwizzle : std::uint8_t
     Alpha   //!< The component is replaced by alpha component.
 };
 
+/**
+\brief External image handle type enumeration.
+\see ExternalImageDescriptor::type
+*/
+enum class ExternalImageType
+{
+    //! No external image.
+    Undefined,
+
+    /**
+    \brief Android hardware buffer, i.e. the handle is of type <code>AHardwareBuffer*</code>.
+    \remarks The texture acquires its own reference to the hardware buffer, i.e. the caller can release its reference after the texture has been created.
+    \note Only supported on: Android.
+    */
+    AndroidHardwareBuffer,
+};
+
 
 /* ----- Structures ----- */
+
+struct YcbcrConversionDescriptor;
+
+/**
+\brief External image descriptor structure.
+\remarks Describes a native image that was allocated outside of LLGL, e.g. by a video decoder.
+\see TextureDescriptor::external
+\see RenderSystem::QueryExternalImageProperties
+*/
+struct ExternalImageDescriptor
+{
+    //! Specifies the type of the external image handle. By default ExternalImageType::Undefined.
+    ExternalImageType   type    = ExternalImageType::Undefined;
+
+    /**
+    \brief Native handle of the external image. By default null.
+    \remarks For ExternalImageType::AndroidHardwareBuffer, this must be a pointer of type <code>AHardwareBuffer*</code>.
+    */
+    void*               handle  = nullptr;
+};
 
 /**
 \brief Texture component swizzle structure for red, green, blue, and alpha components.
@@ -361,6 +398,32 @@ struct TextureDescriptor
     \see TextureDescriptor::miscFlags
     */
     ClearValue      clearValue;
+
+    /**
+    \brief Optional external image to import. By default null.
+    \remarks If this is non-null, the texture does not allocate its own memory but references the external image.
+    In this case, \c type must be TextureType::Texture2D, \c bindFlags must only contain BindFlags::Sampled,
+    and \c extent, \c format, \c mipLevels, and \c arrayLayers are ignored as they are determined by the external image.
+    Initial image data cannot be specified for external images.
+    \remarks Access to the external image must be synchronized with CommandBuffer::AcquireExternalTexture and CommandBuffer::ReleaseExternalTexture.
+    \remarks The shader declaration of an external texture differs between backends: with Vulkan, it is sampled like a regular 2D texture,
+    while OpenGLES imports \e every external image as <code>GL_TEXTURE_EXTERNAL_OES</code>, even images with a single-planar RGBA format.
+    Such textures must be declared as \c samplerExternalOES in GLSL, which requires the \c GL_OES_EGL_image_external_essl3 extension.
+    \remarks The pointer is only read during the call to RenderSystem::CreateTexture and Texture::GetDesc always returns null for this member.
+    \note Only supported with: Vulkan, OpenGLES.
+    \see RenderingFeatures::hasExternalImageAndroid
+    */
+    const ExternalImageDescriptor*      external        = nullptr;
+
+    /**
+    \brief Optional Y'CbCr sampler conversion. By default null.
+    \remarks This is required for multi-planar formats (see IsMultiPlanarFormat) and for external images that require a Y'CbCr conversion
+    (see ExternalImageProperties::requiresYcbcr). It must be equal to the conversion of the immutable sampler this texture is sampled with.
+    \remarks The pointer is only read during the call to RenderSystem::CreateTexture and Texture::GetDesc always returns null for this member.
+    \note Only supported with: Vulkan.
+    \see SamplerDescriptor::ycbcrConversion
+    */
+    const YcbcrConversionDescriptor*    ycbcrConversion = nullptr;
 };
 
 /**

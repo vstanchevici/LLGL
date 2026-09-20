@@ -114,6 +114,7 @@ enum class GLTextureTarget
     TextureBuffer,              // GL_TEXTURE_BUFFER
     Texture2DMultisample,       // GL_TEXTURE_2D_MULTISAMPLE
     Texture2DMultisampleArray,  // GL_TEXTURE_2D_MULTISAMPLE_ARRAY
+    TextureExternalOES,         // GL_TEXTURE_EXTERNAL_OES (GL_OES_EGL_image_external)
 
     Num,
 };

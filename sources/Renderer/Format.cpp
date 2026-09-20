@@ -33,6 +33,7 @@ static constexpr long Dim2D         = FormatFlags::SupportsTexture2D;
 static constexpr long Dim3D         = FormatFlags::SupportsTexture3D;
 static constexpr long DimCube       = FormatFlags::SupportsTextureCube;
 static constexpr long Vertex        = FormatFlags::SupportsVertex;
+static constexpr long Planar        = FormatFlags::IsMultiPlanar;
 
 static constexpr long Dim1D_2D      = Dim1D | Dim2D;
 static constexpr long Dim2D_3D      = Dim2D | Dim3D;
@@ -170,6 +171,10 @@ static const FormatAttributes g_formatAttribs[] =
     {  64, 4, 4, 1, ImageFormat::Compressed,   DataType::Int8,      Mips | Dim2D_3D | DimCube | Compr | SNorm                  }, // BC4SNorm
     { 128, 4, 4, 2, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // BC5UNorm
     { 128, 4, 4, 2, ImageFormat::Compressed,   DataType::Int8,      Mips | Dim2D_3D | DimCube | Compr | SNorm                  }, // BC5SNorm
+    { 128, 4, 4, 3, ImageFormat::Compressed,   DataType::Float16,   Mips | Dim2D_3D | DimCube | Compr | UFloat                 }, // BC6HUFloat
+    { 128, 4, 4, 3, ImageFormat::Compressed,   DataType::Float16,   Mips | Dim2D_3D | DimCube | Compr | SFloat                 }, // BC6HSFloat
+    { 128, 4, 4, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // BC7UNorm
+    { 128, 4, 4, 4, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // BC7UNorm_sRGB
 
     /* --- Advanced scalable texture compression (ASTC) formats --- */
 //   bits  w  h  c  format                     dataType
@@ -207,7 +212,19 @@ static const FormatAttributes g_formatAttribs[] =
     {  64, 4, 4, 3, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ETC1UNorm
     {  64, 4, 4, 3, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm                  }, // ETC2UNorm
     {  64, 4, 4, 3, ImageFormat::Compressed,   DataType::UInt8,     Mips | Dim2D_3D | DimCube | Compr | UNorm | sRGB           }, // ETC2UNorm_sRGB
+
+    /* --- Multi-planar Y'CbCr formats (a 2x2 block covers four luma samples and one sample of each chroma component) --- */
+//   bits  w  h  c  format                     dataType
+    {  48, 2, 2, 3, ImageFormat::Compressed,   DataType::UInt8,     Dim2D | UNorm | Planar                                     }, // NV12
+    {  96, 2, 2, 3, ImageFormat::Compressed,   DataType::UInt16,    Dim2D | UNorm | Planar                                     }, // P010
+    {  48, 2, 2, 3, ImageFormat::Compressed,   DataType::UInt8,     Dim2D | UNorm | Planar                                     }, // YUV420P
 };
+
+// Every entry in LLGL::Format must have exactly one entry in this table, otherwise all subsequent formats are shifted
+static_assert(
+    sizeof(g_formatAttribs)/sizeof(g_formatAttribs[0]) == static_cast<std::size_t>(Format::YUV420P) + 1,
+    "number of format attributes does not match number of entries in LLGL::Format"
+);
 
 
 } // /namespace Internal
@@ -273,6 +290,11 @@ LLGL_EXPORT std::size_t GetMemoryFootprint(const ImageFormat imageFormat, const 
 LLGL_EXPORT bool IsCompressedFormat(const Format format)
 {
     return ((GetFormatAttribs(format).flags & FormatFlags::IsCompressed) != 0);
+}
+
+LLGL_EXPORT bool IsMultiPlanarFormat(const Format format)
+{
+    return ((GetFormatAttribs(format).flags & FormatFlags::IsMultiPlanar) != 0);
 }
 
 LLGL_EXPORT bool IsDepthOrStencilFormat(const Format format)

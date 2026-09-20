@@ -344,6 +344,57 @@ void VKCommandContext::CopyBufferToImage(
     }
 }
 
+VkDeviceSize VKCommandContext::CopyBufferToMultiPlanarImage(
+    VkBuffer                    srcBuffer,
+    VkImage                     dstImage,
+    VkFormat                    format,
+    const VkOffset3D&           offset,
+    const VkExtent3D&           extent)
+{
+    VKImageUtils::VKFormatPlane planes[VKImageUtils::maxNumVkFormatPlanes];
+    const std::uint32_t numPlanes = VKImageUtils::GetVkFormatPlanes(format, planes);
+
+    /* Each plane is copied with its own aspect bit, i.e. VK_IMAGE_ASPECT_PLANE_0_BIT etc. */
+    VkBufferImageCopy regions[VKImageUtils::maxNumVkFormatPlanes];
+    VkDeviceSize bufferOffset = 0;
+
+    for_range(i, numPlanes)
+    {
+        const VkExtent3D planeExtent
+        {
+            extent.width  / planes[i].subsampleX,
+            extent.height / planes[i].subsampleY,
+            1u
+        };
+        const VkOffset3D planeOffset
+        {
+            offset.x / static_cast<std::int32_t>(planes[i].subsampleX),
+            offset.y / static_cast<std::int32_t>(planes[i].subsampleY),
+            0
+        };
+        const TextureSubresource subresource{ 0, 1, 0, 1 };
+        InitVkBufferImageCopy(regions[i], planeOffset, planeExtent, subresource, planes[i].aspect, bufferOffset);
+        bufferOffset += static_cast<VkDeviceSize>(planeExtent.width) * planeExtent.height * planes[i].bytesPerTexel;
+    }
+
+    if (numPlanes > 0)
+        vkCmdCopyBufferToImage(commandBuffer_, srcBuffer, dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, numPlanes, regions);
+
+    return bufferOffset;
+}
+
+VkDeviceSize VKCommandContext::GetMultiPlanarImageDataSize(VkFormat format, const VkExtent3D& extent)
+{
+    VKImageUtils::VKFormatPlane planes[VKImageUtils::maxNumVkFormatPlanes];
+    const std::uint32_t numPlanes = VKImageUtils::GetVkFormatPlanes(format, planes);
+
+    VkDeviceSize size = 0;
+    for_range(i, numPlanes)
+        size += static_cast<VkDeviceSize>(extent.width / planes[i].subsampleX) * (extent.height / planes[i].subsampleY) * planes[i].bytesPerTexel;
+
+    return size;
+}
+
 void VKCommandContext::CopyBufferToImage(
     VKBuffer&                   srcBuffer,
     VKTexture&                  dstTexture,

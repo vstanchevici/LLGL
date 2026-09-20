@@ -34,6 +34,11 @@
 #include "RenderState/GLGraphicsPSO.h"
 #include "RenderState/GLComputePSO.h"
 #include <LLGL/Utils/ForRange.h>
+#include <LLGL/Log.h>
+
+#if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+#   include "Platform/Android/AndroidGLHardwareBuffer.h"
+#endif
 
 #ifdef LLGL_OPENGL
 #   include "Shader/GLSeparableShader.h"
@@ -347,10 +352,33 @@ Texture* GLRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, con
     /* Create <GLTexture> object; will result in a GL renderbuffer or texture instance */
     auto* textureGL = textures_.emplace<GLTexture>(textureDesc);
 
-    /* Initialize either renderbuffer or texture image storage */
-    textureGL->BindAndAllocStorage(textureDesc, initialImage);
+    if (textureDesc.external != nullptr)
+    {
+        /* Attach external image to GL_TEXTURE_EXTERNAL_OES texture */
+        textureGL->BindAndImportExternalImage(*textureDesc.external);
+    }
+    else
+    {
+        /* Initialize either renderbuffer or texture image storage */
+        textureGL->BindAndAllocStorage(textureDesc, initialImage);
+    }
 
     return textureGL;
+}
+
+bool GLRenderSystem::QueryExternalImageProperties(const ExternalImageDescriptor& externalImageDesc, ExternalImageProperties& outProperties)
+{
+    CreateGLContextOnce();
+
+    #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+    if (externalImageDesc.type == ExternalImageType::AndroidHardwareBuffer)
+        return AndroidGLQueryHardwareBufferProperties(static_cast<AHardwareBuffer*>(externalImageDesc.handle), outProperties);
+    #else
+    (void)externalImageDesc;
+    (void)outProperties;
+    #endif
+
+    return false;
 }
 
 void GLRenderSystem::Release(Texture& texture)
@@ -360,8 +388,13 @@ void GLRenderSystem::Release(Texture& texture)
 
 void GLRenderSystem::WriteTexture(Texture& texture, const TextureRegion& textureRegion, const ImageView& srcImageView)
 {
-    /* Bind texture and write texture sub data */
+    /* Bind texture and write texture sub data; external textures are owned by their producer */
     auto& textureGL = LLGL_CAST(GLTexture&, texture);
+    if (textureGL.IsExternal())
+    {
+        Log::Errorf("cannot write to external GL texture\n");
+        return;
+    }
     textureGL.TextureSubImage(textureRegion, srcImageView, false);
 }
 
@@ -370,6 +403,12 @@ void GLRenderSystem::ReadTexture(Texture& texture, const TextureRegion& textureR
     /* Bind texture and write texture sub data */
     LLGL_ASSERT_PTR(dstImageView.data);
     auto& textureGL = LLGL_CAST(GLTexture&, texture);
+
+    if (textureGL.IsExternal())
+    {
+        Log::Errorf("cannot read from external GL texture\n");
+        return;
+    }
 
     #if LLGL_GLEXT_MEMORY_BARRIERS
     if ((textureGL.GetBindFlags() & BindFlags::Storage) != 0)
@@ -385,21 +424,43 @@ void GLRenderSystem::ReadTexture(Texture& texture, const TextureRegion& textureR
 
 /* ----- Sampler States ---- */
 
+// Returns a sampler descriptor that is compatible with external textures if the specified descriptor has a Y'CbCr conversion.
+static SamplerDescriptor GetYcbcrCompatibleSamplerDesc(const SamplerDescriptor& samplerDesc)
+{
+    SamplerDescriptor desc = samplerDesc;
+    if (samplerDesc.ycbcrConversion != nullptr)
+    {
+        /* External textures only support clamp-to-edge wrap modes and linear/nearest filters without MIP-maps */
+        desc.addressModeU   = SamplerAddressMode::Clamp;
+        desc.addressModeV   = SamplerAddressMode::Clamp;
+        desc.addressModeW   = SamplerAddressMode::Clamp;
+        desc.minFilter      = samplerDesc.ycbcrConversion->chromaFilter;
+        desc.magFilter      = samplerDesc.ycbcrConversion->chromaFilter;
+        desc.mipMapEnabled  = false;
+        desc.maxAnisotropy  = 1;
+        desc.compareEnabled = false;
+        desc.minLOD         = 0.0f;
+        desc.maxLOD         = 0.0f;
+    }
+    return desc;
+}
+
 Sampler* GLRenderSystem::CreateSampler(const SamplerDescriptor& samplerDesc)
 {
     CreateGLContextOnce();
+    const SamplerDescriptor desc = GetYcbcrCompatibleSamplerDesc(samplerDesc);
     if (!HasNativeSamplers())
     {
         /* If GL_ARB_sampler_objects is not supported, use emulated sampler states */
         auto* emulatedSamplerGL = emulatedSamplers_.emplace<GLEmulatedSampler>();
-        emulatedSamplerGL->SamplerParameters(samplerDesc);
+        emulatedSamplerGL->SamplerParameters(desc);
         return emulatedSamplerGL;
     }
     else
     {
         /* Create native GL sampler state */
-        auto* samplerGL = samplers_.emplace<GLSampler>(samplerDesc.debugName);
-        samplerGL->SamplerParameters(samplerDesc);
+        auto* samplerGL = samplers_.emplace<GLSampler>(desc.debugName);
+        samplerGL->SamplerParameters(desc);
         return samplerGL;
     }
 }

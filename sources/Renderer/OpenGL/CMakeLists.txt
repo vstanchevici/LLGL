@@ -213,7 +213,12 @@ if(LLGL_BUILD_RENDERER_OPENGLES3)
             target_link_libraries(LLGL_OpenGLES3 LLGL ${OPENGLES_LIBRARIES} "-framework Foundation -framework UIKit -framework QuartzCore -framework OpenGLES -framework GLKit")
             ADD_PROJECT_DEFINE(LLGL_OpenGLES3 GLES_SILENCE_DEPRECATION)
         else()
-            target_link_libraries(LLGL_OpenGLES3 LLGL EGL GLESv3)
+            if(LLGL_ANDROID_PLATFORM)
+                # 'android' provides AHardwareBuffer_* functions (API level 26+) for external textures
+                target_link_libraries(LLGL_OpenGLES3 LLGL EGL GLESv3 android)
+            else()
+                target_link_libraries(LLGL_OpenGLES3 LLGL EGL GLESv3)
+            endif()
         endif()
         
         ADD_PROJECT_DEFINE(LLGL_OpenGLES3 LLGL_OPENGLES3)

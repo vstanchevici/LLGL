@@ -932,7 +932,7 @@ void GLResourceHeap::WriteResourceViewTexture(const ResourceViewDescriptor& desc
     /* Get texture resource and its size parameter */
     auto* textureGL = LLGL_CAST(GLTexture*, GetAsExpectedTexture(desc.resource, BindFlags::Sampled));
 
-    if (IsTextureViewEnabled(desc.textureView))
+    if (IsTextureViewEnabled(desc.textureView) && !textureGL->IsExternal()) // External textures cannot have texture views
     {
         /* Allocate new texture view */
         AllocTextureView(GLRESOURCEHEAP_DATA2(heapPtr, GLuint)[index], textureGL->GetID(), desc.textureView);
@@ -950,7 +950,7 @@ void GLResourceHeap::WriteResourceViewTexture(const ResourceViewDescriptor& desc
 
         /* Write texture ID to segment (GLuint, GLTextureTarget) */
         GLRESOURCEHEAP_DATA0(heapPtr, GLuint         )[index] = textureGL->GetID();
-        GLRESOURCEHEAP_DATA1(heapPtr, GLTextureTarget)[index] = GLStateManager::GetTextureTarget(textureGL->GetType());
+        GLRESOURCEHEAP_DATA1(heapPtr, GLTextureTarget)[index] = textureGL->GetGLTextureTarget();
     }
 
     /* Update flags for segment if texture views have been added or removed */

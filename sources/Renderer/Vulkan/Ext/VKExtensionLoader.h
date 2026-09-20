@@ -21,7 +21,8 @@ namespace LLGL
 bool VKLoadInstanceExtensions(VkInstance instance, const ArrayView<const char*>& supportedInstanceExtensions);
 
 // Loads all Vulkan extensions via the specified VkDevice handle.
-bool VKLoadDeviceExtensions(VkDevice device, const ArrayView<const char*>& supportedDeviceExtensions);
+// Sampler Y'CbCr conversion procedures are only loaded if the device was created with the respective feature enabled.
+bool VKLoadDeviceExtensions(VkDevice device, const ArrayView<const char*>& supportedDeviceExtensions, bool isSamplerYcbcrConversionEnabled);
 
 
 } // /namespace LLGL

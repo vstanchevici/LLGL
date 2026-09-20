@@ -52,6 +52,33 @@ static const char* g_VKOptionalExtensions[] =
     #if VK_EXT_nested_command_buffer
     VK_EXT_NESTED_COMMAND_BUFFER_EXTENSION_NAME,
     #endif
+    #if VK_KHR_sampler_ycbcr_conversion
+    VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME,
+    #endif
+    #if VK_KHR_bind_memory2
+    VK_KHR_BIND_MEMORY_2_EXTENSION_NAME,
+    #endif
+    #if VK_KHR_get_memory_requirements2
+    VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
+    #endif
+    #if VK_KHR_external_memory
+    VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
+    #endif
+    #if VK_KHR_dedicated_allocation
+    VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME,
+    #endif
+    #if VK_KHR_external_semaphore
+    VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
+    #endif
+    #if VK_KHR_external_semaphore_fd
+    VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
+    #endif
+    #if VK_EXT_queue_family_foreign
+    VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME,
+    #endif
+    #if VK_ANDROID_external_memory_android_hardware_buffer
+    VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME,
+    #endif
     nullptr,
 };
 
@@ -100,6 +127,12 @@ static bool IsVulkanInstanceExtOptional(const StringView& name)
         #endif
         #if VK_KHR_portability_enumeration
         || name == VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
+        #endif
+        #if VK_KHR_external_memory_capabilities
+        || name == VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME
+        #endif
+        #if VK_KHR_external_semaphore_capabilities
+        || name == VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME
         #endif
     );
 }

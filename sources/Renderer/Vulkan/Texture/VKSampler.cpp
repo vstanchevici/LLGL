@@ -10,6 +10,7 @@
 #include "../VKCore.h"
 #include "../../ResourceUtils.h"
 #include "../../../Core/CoreUtils.h"
+#include "../../../Core/Assertion.h"
 #include <LLGL/Backend/Vulkan/NativeHandle.h>
 
 
@@ -17,10 +18,18 @@ namespace LLGL
 {
 
 
-VKSampler::VKSampler(VkDevice device, const SamplerDescriptor& desc) :
-    device_  { device                                   },
-    sampler_ { VKSampler::CreateVkSampler(device, desc) }
+VKSampler::VKSampler(VkDevice device, const SamplerDescriptor& desc, VKYcbcrConversionPool* ycbcrConversionPool) :
+    device_  { device                    },
+    sampler_ { device, vkDestroySampler  }
 {
+    if (desc.ycbcrConversion != nullptr && IsYcbcrConversionRequired(*desc.ycbcrConversion))
+    {
+        LLGL_ASSERT_PTR(ycbcrConversionPool);
+        ycbcrConversion_ = ycbcrConversionPool->Acquire(*desc.ycbcrConversion);
+        CreateVkSamplerWithYcbcrConversion(device, desc);
+    }
+    else
+        sampler_ = VKSampler::CreateVkSampler(device, desc);
 }
 
 void VKSampler::SetDebugName(const char* name)
@@ -109,6 +118,51 @@ VKPtr<VkSampler> VKSampler::CreateVkSampler(VkDevice device, const SamplerDescri
         VKThrowIfFailed(result, "failed to create Vulkan sampler");
     }
     return sampler;
+}
+
+
+/*
+ * ======= Private: =======
+ */
+
+void VKSampler::CreateVkSamplerWithYcbcrConversion(VkDevice device, const SamplerDescriptor& desc)
+{
+    /* Chain Y'CbCr conversion into sampler */
+    VkSamplerYcbcrConversionInfo conversionInfo;
+    {
+        conversionInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_INFO;
+        conversionInfo.pNext        = nullptr;
+        conversionInfo.conversion   = ycbcrConversion_->GetVkSamplerYcbcrConversion();
+    }
+
+    /*
+    Override all attributes that are restricted for samplers with Y'CbCr conversion:
+    see https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkSamplerCreateInfo.html
+    */
+    VkSamplerCreateInfo createInfo;
+    VKSampler::ConvertDesc(createInfo, desc);
+    {
+        createInfo.pNext                    = &conversionInfo;
+        createInfo.addressModeU             = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        createInfo.addressModeV             = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        createInfo.addressModeW             = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        createInfo.anisotropyEnable         = VK_FALSE;
+        createInfo.maxAnisotropy            = 1.0f;
+        createInfo.compareEnable            = VK_FALSE;
+        createInfo.unnormalizedCoordinates  = VK_FALSE;
+        createInfo.mipmapMode               = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        createInfo.mipLodBias               = 0.0f;
+        createInfo.minLod                   = 0.0f;
+        createInfo.maxLod                   = 0.0f;
+
+        if (!ycbcrConversion_->HasSeparateReconstructionFilter())
+        {
+            createInfo.minFilter = ycbcrConversion_->GetChromaFilter();
+            createInfo.magFilter = ycbcrConversion_->GetChromaFilter();
+        }
+    }
+    VkResult result = vkCreateSampler(device, &createInfo, nullptr, sampler_.ReleaseAndGetAddressOf());
+    VKThrowIfFailed(result, "failed to create Vulkan sampler with Y'CbCr conversion");
 }
 
 

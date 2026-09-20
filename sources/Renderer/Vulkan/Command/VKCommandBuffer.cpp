@@ -29,7 +29,13 @@
 #include <LLGL/Utils/ForRange.h>
 #include <LLGL/Constants.h>
 #include <LLGL/TypeInfo.h>
+#include <LLGL/Log.h>
 #include <cstddef>
+
+#if defined LLGL_OS_ANDROID || defined LLGL_OS_LINUX
+#   include <poll.h>
+#   include <unistd.h>
+#endif
 
 #include <LLGL/Backend/Vulkan/NativeHandle.h>
 
@@ -65,6 +71,7 @@ VKCommandBuffer::VKCommandBuffer(
                               VKPtr<VkFence>{ device, vkDestroyFence }      },
     numCommandBuffers_      { VKCommandBuffer::GetNumVkCommandBuffers(desc) },
     queuePresentFamily_     { queueFamilyIndices.presentFamily              },
+    queueGraphicsFamily_    { queueFamilyIndices.graphicsFamily             },
     maxDrawIndirectCount_   { GetMaxDrawIndirectCount(physicalDevice)       },
     descriptorSetPoolArray_ { device,
                               device,
@@ -114,6 +121,24 @@ VkFence VKCommandBuffer::GetQueueSubmitFenceAndFlush()
     recordingFence_ = VK_NULL_HANDLE;
     recordingFenceDirty_[commandBufferIndex_] = true;
     return fence;
+}
+
+VkResult VKCommandBuffer::SubmitToQueue(VkQueue queue)
+{
+    VkResult result = VKSubmitCommandBuffer(
+        queue,
+        commandBuffer_,
+        GetQueueSubmitFenceAndFlush(),
+        static_cast<std::uint32_t>(pendingWaitSemaphores_.size()),
+        pendingWaitSemaphores_.data(),
+        pendingWaitStageMasks_.data()
+    );
+
+    /* Semaphores are only waited on once; they are kept alive until the recording fence of this native command buffer is signaled */
+    pendingWaitSemaphores_.clear();
+    pendingWaitStageMasks_.clear();
+
+    return result;
 }
 
 /* ----- Encoding ----- */
@@ -174,7 +199,7 @@ void VKCommandBuffer::End()
     /* Execute command buffer right after encoding for immediate command buffers */
     if (IsImmediateCmdBuffer())
     {
-        VkResult result = VKSubmitCommandBuffer(commandQueue_, commandBuffer_, GetQueueSubmitFenceAndFlush());
+        VkResult result = SubmitToQueue(commandQueue_);
         VKThrowIfFailed(result, "failed to submit command buffer to Vulkan graphics queue");
     }
 
@@ -448,6 +473,10 @@ void VKCommandBuffer::CopyTextureFromFramebuffer(
 void VKCommandBuffer::GenerateMips(Texture& texture)
 {
     auto& textureVK = LLGL_CAST(VKTexture&, texture);
+
+    /* Multi-planar and external images have no MIP-maps */
+    if (textureVK.IsMultiPlanar() || textureVK.IsExternal())
+        return;
     context_.GenerateMips(
         textureVK.GetVkImage(),
         textureVK.GetVkFormat(),
@@ -459,6 +488,10 @@ void VKCommandBuffer::GenerateMips(Texture& texture)
 void VKCommandBuffer::GenerateMips(Texture& texture, const TextureSubresource& subresource)
 {
     auto& textureVK = LLGL_CAST(VKTexture&, texture);
+
+    /* Multi-planar and external images have no MIP-maps */
+    if (textureVK.IsMultiPlanar() || textureVK.IsExternal())
+        return;
 
     const std::uint32_t maxNumMipLevels     = textureVK.GetNumMipLevels();
     const std::uint32_t maxNumArrayLayers   = textureVK.GetNumArrayLayers();
@@ -583,6 +616,92 @@ void VKCommandBuffer::SetIndexBuffer(Buffer& buffer, const Format format, std::u
 }
 
 /* ----- Resources ----- */
+
+// Shader stages that can sample external textures
+static constexpr VkPipelineStageFlags g_externalTextureStageMask =
+(
+    VK_PIPELINE_STAGE_VERTEX_SHADER_BIT     |
+    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT   |
+    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+);
+
+void VKCommandBuffer::AcquireExternalTexture(Texture& texture, long long nativeFence)
+{
+    auto& textureVK = LLGL_CAST(VKTexture&, texture);
+
+    /* Make the submission wait on the producer's fence; the acquire barrier below chains with this semaphore wait via the stage mask */
+    if (nativeFence >= 0)
+        ImportWaitSemaphoreFromSyncFd(static_cast<int>(nativeFence));
+
+    if (!textureVK.IsExternal())
+        return;
+
+    /*
+    Queue family ownership transfers are illegal inside a render pass. Splitting the render pass here would silently
+    store and load all attachments, which is expensive on tile-based GPUs, so the barrier is skipped instead.
+    */
+    if (IsInsideRenderPass())
+    {
+        Log::Errorf("cannot acquire external texture inside a render pass; record CommandBuffer::AcquireExternalTexture before BeginRenderPass\n");
+        return;
+    }
+
+    VkImageMemoryBarrier barrier;
+    {
+        barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.pNext                           = nullptr;
+        barrier.srcAccessMask                   = 0; // Ignored for acquire operations
+        barrier.dstAccessMask                   = VK_ACCESS_SHADER_READ_BIT;
+        barrier.oldLayout                       = VK_IMAGE_LAYOUT_GENERAL; // Not UNDEFINED, since that would allow the implementation to discard the content
+        barrier.newLayout                       = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcQueueFamilyIndex             = GetExternalQueueFamilyIndex();
+        barrier.dstQueueFamilyIndex             = queueGraphicsFamily_;
+        barrier.image                           = textureVK.GetVkImage();
+        barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseMipLevel   = 0;
+        barrier.subresourceRange.levelCount     = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount     = 1;
+    }
+    vkCmdPipelineBarrier(commandBuffer_, g_externalTextureStageMask, g_externalTextureStageMask, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    textureVK.OverrideVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
+void VKCommandBuffer::ReleaseExternalTexture(Texture& texture)
+{
+    auto& textureVK = LLGL_CAST(VKTexture&, texture);
+    if (!textureVK.IsExternal())
+        return;
+
+    /* Transfer ownership back to the external producer; see AcquireExternalTexture for why this is not allowed inside a render pass */
+    if (IsInsideRenderPass())
+    {
+        Log::Errorf("cannot release external texture inside a render pass; record CommandBuffer::ReleaseExternalTexture after EndRenderPass\n");
+        return;
+    }
+
+    VkImageMemoryBarrier barrier;
+    {
+        barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.pNext                           = nullptr;
+        barrier.srcAccessMask                   = VK_ACCESS_SHADER_READ_BIT;
+        barrier.dstAccessMask                   = 0; // Ignored for release operations
+        barrier.oldLayout                       = textureVK.GetVkImageLayout();
+        barrier.newLayout                       = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.srcQueueFamilyIndex             = queueGraphicsFamily_;
+        barrier.dstQueueFamilyIndex             = GetExternalQueueFamilyIndex();
+        barrier.image                           = textureVK.GetVkImage();
+        barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseMipLevel   = 0;
+        barrier.subresourceRange.levelCount     = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount     = 1;
+    }
+    vkCmdPipelineBarrier(commandBuffer_, g_externalTextureStageMask, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    textureVK.OverrideVkImageLayout(VK_IMAGE_LAYOUT_GENERAL);
+}
 
 void VKCommandBuffer::SetResourceHeap(ResourceHeap& resourceHeap, std::uint32_t descriptorSet)
 {
@@ -1508,6 +1627,75 @@ void VKCommandBuffer::AcquireNextBuffer()
     context_.Reset(commandBuffer_);
 
     stagingBufferPools_[commandBufferIndex_].Reset();
+
+    /* Semaphores of the previous submission of this native command buffer are no longer in use after its fence has been signaled */
+    waitSemaphoresArray_[commandBufferIndex_].clear();
+    pendingWaitSemaphores_.clear();
+    pendingWaitStageMasks_.clear();
+}
+
+void VKCommandBuffer::ImportWaitSemaphoreFromSyncFd(int syncFd)
+{
+    #if VK_KHR_external_semaphore_fd
+
+    if (HasExtension(VKExt::KHR_external_semaphore_fd))
+    {
+        /* Create binary semaphore and import sync file descriptor as temporary payload */
+        VKPtr<VkSemaphore> semaphore{ device_, vkDestroySemaphore };
+        VkSemaphoreCreateInfo createInfo;
+        {
+            createInfo.sType    = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+            createInfo.pNext    = nullptr;
+            createInfo.flags    = 0;
+        }
+        VkResult result = vkCreateSemaphore(device_, &createInfo, nullptr, semaphore.ReleaseAndGetAddressOf());
+        VKThrowIfFailed(result, "failed to create Vulkan semaphore for external fence");
+
+        VkImportSemaphoreFdInfoKHR importInfo;
+        {
+            importInfo.sType        = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR;
+            importInfo.pNext        = nullptr;
+            importInfo.semaphore    = semaphore.Get();
+            importInfo.flags        = VK_SEMAPHORE_IMPORT_TEMPORARY_BIT; // Required for sync file descriptors
+            importInfo.handleType   = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+            importInfo.fd           = syncFd;
+        }
+        result = vkImportSemaphoreFdKHR(device_, &importInfo);
+
+        if (result == VK_SUCCESS)
+        {
+            /* Vulkan owns the file descriptor now */
+            pendingWaitSemaphores_.push_back(semaphore.Get());
+            pendingWaitStageMasks_.push_back(g_externalTextureStageMask);
+            waitSemaphoresArray_[commandBufferIndex_].push_back(std::move(semaphore));
+            return;
+        }
+    }
+
+    #endif // /VK_KHR_external_semaphore_fd
+
+    /* Fall back to waiting on the CPU if the sync file descriptor cannot be imported */
+    #if defined LLGL_OS_ANDROID || defined LLGL_OS_LINUX
+    struct pollfd pollFd;
+    {
+        pollFd.fd       = syncFd;
+        pollFd.events   = POLLIN;
+        pollFd.revents  = 0;
+    }
+    ::poll(&pollFd, 1, -1);
+    ::close(syncFd);
+    #else
+    (void)syncFd;
+    #endif
+}
+
+std::uint32_t VKCommandBuffer::GetExternalQueueFamilyIndex() const
+{
+    #if VK_EXT_queue_family_foreign
+    if (HasExtension(VKExt::EXT_queue_family_foreign))
+        return VK_QUEUE_FAMILY_FOREIGN_EXT;
+    #endif
+    return VK_QUEUE_FAMILY_EXTERNAL;
 }
 
 void VKCommandBuffer::ResetBindingStates()

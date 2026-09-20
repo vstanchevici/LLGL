@@ -188,6 +188,11 @@ DXGI_FORMAT ToDXGIFormat(const Format format)
         case Format::ETC1UNorm:         break;
         case Format::ETC2UNorm:         break;
         case Format::ETC2UNorm_sRGB:    break;
+
+        /* --- Multi-planar Y'CbCr formats --- */
+        case Format::NV12:              break;
+        case Format::P010:              break;
+        case Format::YUV420P:           break;
     }
     LLGL_TRAP_DX_MAP(Format, format, DXGI_FORMAT);
 }

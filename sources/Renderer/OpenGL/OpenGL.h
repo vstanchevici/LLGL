@@ -220,6 +220,22 @@
 #   define LLGL_USE_NULL_FRAGMENT_SHADER 1
 #endif
 
+// External textures via EGLImage (GL_OES_EGL_image_external) are only supported for Android hardware buffers.
+#if LLGL_OPENGLES3 && defined LLGL_OS_ANDROID
+#   define LLGL_GLEXT_EGL_IMAGE_EXTERNAL 1
+#endif
+
+// Tokens of GL_OES_EGL_image_external; defined here since not all profiles include the GLES extension header.
+#ifndef GL_TEXTURE_EXTERNAL_OES
+#   define GL_TEXTURE_EXTERNAL_OES 0x8D65
+#endif
+#ifndef GL_SAMPLER_EXTERNAL_OES
+#   define GL_SAMPLER_EXTERNAL_OES 0x8D66
+#endif
+#ifndef GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT
+#   define GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT 0x8BE7 // GL_EXT_YUV_target
+#endif
+
 #endif
 
 

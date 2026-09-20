@@ -138,6 +138,26 @@ static bool DECL_LOADVKEXT_PROC(KHR_get_physical_device_properties2)
     return true;
 }
 
+#if VK_KHR_external_semaphore_fd
+
+static bool DECL_LOADVKEXT_PROC(KHR_external_semaphore_fd)
+{
+    LOAD_VKPROC( vkImportSemaphoreFdKHR );
+    return true;
+}
+
+#endif // /VK_KHR_external_semaphore_fd
+
+#if VK_ANDROID_external_memory_android_hardware_buffer
+
+static bool DECL_LOADVKEXT_PROC(ANDROID_external_memory_android_hardware_buffer)
+{
+    LOAD_VKPROC( vkGetAndroidHardwareBufferPropertiesANDROID );
+    return true;
+}
+
+#endif // /VK_ANDROID_external_memory_android_hardware_buffer
+
 static bool DECL_LOADVKEXT_PROC(EXT_transform_feedback)
 {
     LOAD_VKPROC( vkCmdBindTransformFeedbackBuffersEXT );
@@ -205,7 +225,17 @@ bool VKLoadInstanceExtensions(VkInstance instance, const ArrayView<const char*>&
     return true;
 }
 
-bool VKLoadDeviceExtensions(VkDevice device, const ArrayView<const char*>& supportedDeviceExtensions)
+// Loads the procedures for sampler Y'CbCr conversions from Vulkan 1.1 core or from the KHR extension as fallback.
+static bool LoadSamplerYcbcrConversionProcs(VkDevice device)
+{
+    if (!LoadVKProc(device, vkCreateSamplerYcbcrConversionKHR, "vkCreateSamplerYcbcrConversion"))
+        LoadVKProc(device, vkCreateSamplerYcbcrConversionKHR, "vkCreateSamplerYcbcrConversionKHR");
+    if (!LoadVKProc(device, vkDestroySamplerYcbcrConversionKHR, "vkDestroySamplerYcbcrConversion"))
+        LoadVKProc(device, vkDestroySamplerYcbcrConversionKHR, "vkDestroySamplerYcbcrConversionKHR");
+    return (vkCreateSamplerYcbcrConversionKHR != nullptr && vkDestroySamplerYcbcrConversionKHR != nullptr);
+}
+
+bool VKLoadDeviceExtensions(VkDevice device, const ArrayView<const char*>& supportedDeviceExtensions, bool isSamplerYcbcrConversionEnabled)
 {
     constexpr bool abortOnFailure = true;
 
@@ -250,6 +280,30 @@ bool VKLoadDeviceExtensions(VkDevice device, const ArrayView<const char*>& suppo
     ENABLE_VKEXT( EXT_conservative_rasterization );
     ENABLE_VKEXT( EXT_nested_command_buffer      );
     ENABLE_VKEXT( KHR_imageless_framebuffer      );
+
+    /* Extensions for Y'CbCr conversions and external memory */
+    ENABLE_VKEXT( KHR_external_memory            );
+    ENABLE_VKEXT( KHR_dedicated_allocation       );
+    ENABLE_VKEXT( EXT_queue_family_foreign       );
+
+    #if VK_KHR_external_semaphore_fd
+    LoadExtension(VKExt::KHR_external_semaphore_fd, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME, Load_VK_KHR_external_semaphore_fd);
+    #endif
+
+    #if VK_ANDROID_external_memory_android_hardware_buffer
+    LoadExtension(
+        VKExt::ANDROID_external_memory_android_hardware_buffer,
+        VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME,
+        Load_VK_ANDROID_external_memory_android_hardware_buffer
+    );
+    #endif
+
+    /*
+    Sampler Y'CbCr conversion is either part of Vulkan 1.1 core or provided by VK_KHR_sampler_ycbcr_conversion,
+    but it can only be used if the respective device feature has been enabled.
+    */
+    if (isSamplerYcbcrConversionEnabled && LoadSamplerYcbcrConversionProcs(device))
+        RegisterExtension(VKExt::KHR_sampler_ycbcr_conversion);
 
     #undef LOAD_VKEXT
 

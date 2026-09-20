@@ -196,6 +196,11 @@ VkFormat Map(const Format format)
         case Format::ETC1UNorm:         break; // unsupported
         case Format::ETC2UNorm:         return VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK;
         case Format::ETC2UNorm_sRGB:    return VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK;
+
+        /* --- Multi-planar Y'CbCr formats --- */
+        case Format::NV12:              return VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+        case Format::P010:              return VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
+        case Format::YUV420P:           return VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM;
     }
     MapFailed("Format", "VkFormat");
 }
@@ -636,6 +641,11 @@ Format Unmap(const VkFormat format)
         /* --- Ericsson texture compression (ETC) formats --- */
         case VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK:     return Format::ETC2UNorm;
         case VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK:      return Format::ETC2UNorm_sRGB;
+
+        /* --- Multi-planar Y'CbCr formats --- */
+        case VK_FORMAT_G8_B8R8_2PLANE_420_UNORM:                    return Format::NV12;
+        case VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16:   return Format::P010;
+        case VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM:                   return Format::YUV420P;
 
         default:                                    return Format::Undefined;
     }

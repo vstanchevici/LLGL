@@ -91,13 +91,14 @@ void VKDeviceImage::CreateVkImage(
     std::uint32_t           numArrayLayers,
     VkImageCreateFlags      createFlags,
     VkSampleCountFlagBits   sampleCountBits,
-    VkImageUsageFlags       usageFlags)
+    VkImageUsageFlags       usageFlags,
+    const void*             pNext)
 {
     /* Create image object */
     VkImageCreateInfo createInfo;
     {
         createInfo.sType                    = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        createInfo.pNext                    = nullptr;
+        createInfo.pNext                    = pNext;
         createInfo.flags                    = createFlags;
         createInfo.imageType                = imageType;
         createInfo.format                   = format;
@@ -127,13 +128,14 @@ void VKDeviceImage::CreateVkImageView(
     VkFormat                        format,
     const VkImageSubresourceRange&  subresourceRange,
     VKPtr<VkImageView>&             outImageView,
-    const VkComponentMapping*       components)
+    const VkComponentMapping*       components,
+    const void*                     pNext)
 {
     /* Create image view object */
     VkImageViewCreateInfo createInfo;
     {
         createInfo.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        createInfo.pNext            = nullptr;
+        createInfo.pNext            = pNext;
         createInfo.flags            = 0;
         createInfo.image            = image_;
         createInfo.viewType         = viewType;

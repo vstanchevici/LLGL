@@ -209,7 +209,17 @@ static const GLenum g_textureTargetsEnum[] =
     0, // GL_TEXTURE_2D_MULTISAMPLE
     0, // GL_TEXTURE_2D_MULTISAMPLE_ARRAY
     #endif
+    #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+    GL_TEXTURE_EXTERNAL_OES,
+    #else
+    0, // GL_TEXTURE_EXTERNAL_OES
+    #endif
 };
+
+static_assert(
+    sizeof(g_textureTargetsEnum)/sizeof(g_textureTargetsEnum[0]) == static_cast<std::size_t>(GLTextureTarget::Num),
+    "g_textureTargetsEnum must have exactly one entry for each GLTextureTarget"
+);
 
 // Maps std::uint32_t to <texture> in glActiveTexture
 static const GLenum g_textureLayersEnum[] =
@@ -1412,11 +1422,14 @@ void GLStateManager::UnbindTextures(GLuint first, GLsizei count)
     else
     #endif // /LLGL_GLEXT_MULTI_BIND
     {
-        /* Unbind all targets for each texture layer individually */
+        /* Unbind all targets for each texture layer individually; skip texture targets that are not available for this GL profile */
         for_range(i, count)
         {
             for_range(target, GLContextState::numTextureTargets)
-                BindTexture(first + i, static_cast<GLTextureTarget>(target), 0);
+            {
+                if (g_textureTargetsEnum[target] != 0)
+                    BindTexture(first + i, static_cast<GLTextureTarget>(target), 0);
+            }
         }
     }
 }
@@ -1510,7 +1523,7 @@ void GLStateManager::PopBoundTexture()
 void GLStateManager::BindGLTexture(GLTexture& texture)
 {
     /* Bind native texture */
-    BindTexture(GLStateManager::GetTextureTarget(texture.GetType()), texture.GetID());
+    BindTexture(texture.GetGLTextureTarget(), texture.GetID());
 
     /* Manage reference for emulated sampler binding */
     if (!HasNativeSamplers())
@@ -1527,7 +1540,7 @@ void GLStateManager::BindGLTexture(GLTexture& texture)
 void GLStateManager::BindGLTexture(GLuint layer, GLTexture& texture)
 {
     /* Bind native texture */
-    BindTexture(layer, GLStateManager::GetTextureTarget(texture.GetType()), texture.GetID());
+    BindTexture(layer, texture.GetGLTextureTarget(), texture.GetID());
 
     /* Manage reference for emulated sampler binding */
     if (!HasNativeSamplers())
@@ -1645,7 +1658,7 @@ void GLStateManager::BindCombinedEmulatedSampler(GLuint layer, const GLEmulatedS
     texture.BindTexParameters(sampler);
 
     /* Bind native texture */
-    BindTexture(layer, GLStateManager::GetTextureTarget(texture.GetType()), texture.GetID());
+    BindTexture(layer, texture.GetGLTextureTarget(), texture.GetID());
 }
 
 /* ----- Shader program ----- */

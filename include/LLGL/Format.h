@@ -265,6 +265,11 @@ enum class Format
     ETC1UNorm,          //!< Compressed color format: ETC1 compressed RGB with normalized unsigned integer components in 64-bit per 4x4 block. \note Only supported with: OpenGL, Vulkan, Metal.
     ETC2UNorm,          //!< Compressed color format: ETC2 compressed RGB with normalized unsigned integer components in 64-bit per 4x4 block. \note Only supported with: OpenGL, Vulkan, Metal.
     ETC2UNorm_sRGB,     //!< Compressed color format: ETC2 compressed RGB with normalized unsigned integer components in 64-bit per 4x4 block in non-linear sRGB color space. \note Only supported with: OpenGL, Vulkan, Metal.
+
+    /* --- Multi-planar Y'CbCr formats --- */
+    NV12,               //!< Multi-planar Y'CbCr 4:2:0 format: 8-bit luma plane followed by an interleaved 8-bit CbCr plane at half resolution. Requires a Y'CbCr sampler conversion. \note Only supported with: Vulkan.
+    P010,               //!< Multi-planar Y'CbCr 4:2:0 format: 10-bit luma plane followed by an interleaved 10-bit CbCr plane at half resolution; each component is stored in the upper 10 bits of 16 bits. Requires a Y'CbCr sampler conversion. \note Only supported with: Vulkan.
+    YUV420P,            //!< Multi-planar Y'CbCr 4:2:0 format: 8-bit luma plane followed by an 8-bit Cb plane and an 8-bit Cr plane, each at half resolution. Requires a Y'CbCr sampler conversion. \note Only supported with: Vulkan.
 };
 
 /**
@@ -409,6 +414,13 @@ struct FormatFlags
         */
         SupportsVertex          = (1 << 15),
 
+        /**
+        \brief Specifies whether the format is a multi-planar Y'CbCr format (e.g. Format::NV12).
+        \remarks Textures with such a format must be sampled with a Y'CbCr sampler conversion.
+        \see YcbcrConversionDescriptor
+        */
+        IsMultiPlanar           = (1 << 16),
+
         //! Combines the format flags \c IsInteger and \c IsUnsigned.
         IsUnsignedInteger       = (IsUnsigned | IsInteger),
 
@@ -507,6 +519,13 @@ e.g. Format::BC1UNorm, Format::BC2UNorm_sRGB, Format::BC4SNorm, etc.
 \see Format
 */
 LLGL_EXPORT bool IsCompressedFormat(const Format format);
+
+/**
+\brief Returns true if the specified hardware format is a multi-planar Y'CbCr format,
+i.e. Format::NV12, Format::P010, or Format::YUV420P.
+\see FormatFlags::IsMultiPlanar
+*/
+LLGL_EXPORT bool IsMultiPlanarFormat(const Format format);
 
 /**
 \brief Returns true if the specified hardware format is a depth or depth-stencil format,

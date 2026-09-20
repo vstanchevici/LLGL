@@ -55,7 +55,8 @@ class VKDeviceImage
             std::uint32_t           numArrayLayers,
             VkImageCreateFlags      createFlags,
             VkSampleCountFlagBits   sampleCountBits,
-            VkImageUsageFlags       usageFlags
+            VkImageUsageFlags       usageFlags,
+            const void*             pNext               = nullptr
         );
 
         void ReleaseVkImage();
@@ -66,7 +67,8 @@ class VKDeviceImage
             VkFormat                        format,
             const VkImageSubresourceRange&  subresourceRange,
             VKPtr<VkImageView>&             outImageView,
-            const VkComponentMapping*       components          = nullptr
+            const VkComponentMapping*       components          = nullptr,
+            const void*                     pNext               = nullptr
         );
 
         VkImageLayout TransitionImageLayout(

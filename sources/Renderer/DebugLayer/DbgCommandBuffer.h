@@ -43,6 +43,9 @@ class DbgCommandBuffer final : public CommandBufferTier1
 
         void SetDebugName(const char* name) override;
 
+        void AcquireExternalTexture(Texture& texture, long long nativeFence) override;
+        void ReleaseExternalTexture(Texture& texture) override;
+
     public:
 
         DbgCommandBuffer(
@@ -111,6 +114,9 @@ class DbgCommandBuffer final : public CommandBufferTier1
             bool finishedRecording  = false;
             bool insideRenderPass   = false;
             bool streamOutputBusy   = false;
+
+            // External textures that have been acquired but not released yet (see AcquireExternalTexture).
+            std::vector<DbgTexture*> acquiredExternalTextures;
         };
 
         struct SwapChainFramePair
@@ -188,6 +194,9 @@ class DbgCommandBuffer final : public CommandBufferTier1
 
         void AssertRecording();
         void AssertInsideRenderPass();
+
+        // Returns true if the specified external texture is currently acquired by this command buffer.
+        bool IsExternalTextureAcquired(DbgTexture& textureDbg) const;
         void AssertGraphicsPipelineBound();
         void AssertComputePipelineBound();
         void AssertVertexBufferBound();

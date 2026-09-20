@@ -11,6 +11,7 @@
 
 #include <LLGL/Export.h>
 #include <LLGL/PipelineStateFlags.h>
+#include <LLGL/TextureFlags.h>
 #include <cstddef>
 #include <cstdint>
 
@@ -91,8 +92,101 @@ enum class SamplerFilter
     Linear,
 };
 
+/**
+\brief Color model conversion for Y'CbCr sampler conversions.
+\see YcbcrConversionDescriptor::model
+*/
+enum class YcbcrModel
+{
+    RGBIdentity,    //!< Input is already RGB. The color values are only range-expanded if YcbcrRange::Narrow is specified.
+    YcbcrIdentity,  //!< Range expansion only. The color values are not converted to RGB.
+    Ycbcr709,       //!< Color model conversion from Y'CbCr to R'G'B' as defined in BT.709.
+    Ycbcr601,       //!< Color model conversion from Y'CbCr to R'G'B' as defined in BT.601.
+    Ycbcr2020,      //!< Color model conversion from Y'CbCr to R'G'B' as defined in BT.2020.
+};
+
+/**
+\brief Numerical range of the encoded values for Y'CbCr sampler conversions.
+\see YcbcrConversionDescriptor::range
+*/
+enum class YcbcrRange
+{
+    Full,   //!< The full range of the encoded values is valid, i.e. [0, 255] for 8-bit components.
+    Narrow, //!< Headroom and foot room are reserved in the encoding, i.e. [16, 235] for luma and [16, 240] for chroma with 8-bit components.
+};
+
+/**
+\brief Location of downsampled chroma samples relative to the luma samples.
+\see YcbcrConversionDescriptor::xChromaOffset
+\see YcbcrConversionDescriptor::yChromaOffset
+*/
+enum class ChromaLocation
+{
+    CositedEven,    //!< Chroma samples are aligned with the luma samples with even coordinates.
+    Midpoint,       //!< Chroma samples are located half way between each even luma sample and the nearest higher odd luma sample.
+};
+
 
 /* ----- Structures ----- */
+
+/**
+\brief Y'CbCr sampler conversion descriptor structure.
+\remarks A texture that is sampled with a Y'CbCr conversion must be created with the same conversion descriptor as the sampler.
+Such a sampler can only be used as immutable sampler for a combined texture-sampler binding (see BindingDescriptor::immutableSampler).
+The conversion is performed by the hardware before the texel is returned to the shader, i.e. the shader receives RGB values.
+\remarks Use RenderSystem::QueryExternalImageProperties to query the conversion that is suggested by the driver for an external image.
+\remarks A conversion is only applied if its format is multi-planar (see IsMultiPlanarFormat) or its external format is non-zero.
+Otherwise, the conversion is ignored, so the descriptor returned by RenderSystem::QueryExternalImageProperties can always be passed through.
+\remarks With OpenGLES, the color model conversion of external images is performed implicitly by the driver and the conversion parameters are ignored.
+\note Only supported with: Vulkan, OpenGLES (external images only).
+\see SamplerDescriptor::ycbcrConversion
+\see TextureDescriptor::ycbcrConversion
+\see RenderingFeatures::hasSamplerYcbcrConversion
+*/
+struct YcbcrConversionDescriptor
+{
+    /**
+    \brief Multi-planar texture format, e.g. Format::NV12. By default Format::Undefined.
+    \remarks This must be Format::Undefined if \c externalFormat is non-zero.
+    \see IsMultiPlanarFormat
+    */
+    Format              format                      = Format::Undefined;
+
+    /**
+    \brief Opaque driver-specific format of an external image. By default 0.
+    \remarks This is only used for external images whose format cannot be expressed with a Format entry.
+    The value is returned by RenderSystem::QueryExternalImageProperties and must be passed through unmodified.
+    \see ExternalImageProperties::ycbcrConversion
+    */
+    std::uint64_t       externalFormat              = 0;
+
+    //! Color model conversion. By default YcbcrModel::Ycbcr709.
+    YcbcrModel          model                       = YcbcrModel::Ycbcr709;
+
+    //! Numerical range of the encoded values. By default YcbcrRange::Narrow.
+    YcbcrRange          range                       = YcbcrRange::Narrow;
+
+    //! Horizontal location of the chroma samples. By default ChromaLocation::Midpoint.
+    ChromaLocation      xChromaOffset               = ChromaLocation::Midpoint;
+
+    //! Vertical location of the chroma samples. By default ChromaLocation::Midpoint.
+    ChromaLocation      yChromaOffset               = ChromaLocation::Midpoint;
+
+    /**
+    \brief Filter for chroma reconstruction. By default SamplerFilter::Linear.
+    \remarks If the format does not support linear chroma filtering, the backend falls back to SamplerFilter::Nearest.
+    */
+    SamplerFilter       chromaFilter                = SamplerFilter::Linear;
+
+    /**
+    \brief Component swizzle that is applied before the color model conversion. Each component is mapped to its identity by default.
+    \remarks For external images, this should be the value returned by RenderSystem::QueryExternalImageProperties.
+    */
+    TextureSwizzleRGBA  swizzle;
+
+    //! Specifies whether chroma reconstruction is forced to be explicit. By default false.
+    bool                forceExplicitReconstruction = false;
+};
 
 /**
 \brief Texture sampler descriptor structure.
@@ -166,7 +260,29 @@ struct LLGL_EXPORT SamplerDescriptor
     - Opaque white: <code>{1,1,1,1}</code>
     */
     float               borderColor[4]  = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+    /**
+    \brief Optional Y'CbCr sampler conversion. By default null.
+    \remarks If this is non-null, the sampler can only be used as immutable sampler for a combined texture-sampler binding
+    and the backend overrides the following attributes as required by the conversion:
+    all address modes are SamplerAddressMode::Clamp, MIP-mapping and anisotropy are disabled, compare operations are disabled,
+    and the min/mag filters equal YcbcrConversionDescriptor::chromaFilter unless the format supports separate reconstruction filters.
+    \remarks The pointer is only read during the call to RenderSystem::CreateSampler.
+    \note Only supported with: Vulkan, OpenGLES (external images only).
+    \see BindingDescriptor::immutableSampler
+    \see RenderingFeatures::hasSamplerYcbcrConversion
+    */
+    const YcbcrConversionDescriptor* ycbcrConversion = nullptr;
 };
+
+
+/* ----- Functions ----- */
+
+//! Returns true if the specified Y'CbCr conversion descriptors are equal.
+LLGL_EXPORT bool operator == (const YcbcrConversionDescriptor& lhs, const YcbcrConversionDescriptor& rhs);
+
+//! Returns true if the specified Y'CbCr conversion descriptors are unequal.
+LLGL_EXPORT bool operator != (const YcbcrConversionDescriptor& lhs, const YcbcrConversionDescriptor& rhs);
 
 
 } // /namespace LLGL

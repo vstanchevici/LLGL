@@ -13,6 +13,10 @@
 #include <cstdint>
 #include <limits>
 
+#if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+#   include "../../Platform/Android/AndroidGLHardwareBuffer.h"
+#endif
+
 
 namespace LLGL
 {
@@ -159,6 +163,17 @@ static void GLGetSupportedFeatures(RenderingFeatures& features, GLint version)
     features.hasPipelineCaching             = (version >= 300); // GLES 3.0
     features.hasPipelineStatistics          = false;
     features.hasRenderCondition             = false;
+
+    /*
+    GLES cannot configure Y'CbCr conversions, but external images are sampled via GL_TEXTURE_EXTERNAL_OES
+    and the driver performs the color model conversion based on the dataspace of the hardware buffer.
+    */
+    features.hasSamplerYcbcrConversion      = false;
+    #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+    features.hasExternalImageAndroid        = AndroidGLSupportsHardwareBuffers();
+    #else
+    features.hasExternalImageAndroid        = false;
+    #endif
 }
 
 static void GLGetFeatureLimits(RenderingLimits& limits, GLint version)

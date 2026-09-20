@@ -938,6 +938,10 @@ UniformType UnmapUniformType(const GLenum uniformType)
         case GL_UNSIGNED_INT_SAMPLER_3D:
         case GL_UNSIGNED_INT_SAMPLER_CUBE:
         case GL_UNSIGNED_INT_SAMPLER_2D_ARRAY:
+        #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+        case GL_SAMPLER_EXTERNAL_OES:   // GL_OES_EGL_image_external
+        case GL_SAMPLER_EXTERNAL_2D_Y2Y_EXT: // GL_EXT_YUV_target
+        #endif
             return UniformType::Sampler;
     }
 

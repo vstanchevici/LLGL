@@ -33,6 +33,10 @@ enum class VKExt
     KHR_maintenance1,
     KHR_get_physical_device_properties2,
     KHR_imageless_framebuffer,
+    KHR_sampler_ycbcr_conversion,
+    KHR_external_memory,
+    KHR_dedicated_allocation,
+    KHR_external_semaphore_fd,
 
     /* Multivendor extensions */
     EXT_conditional_rendering,
@@ -41,6 +45,10 @@ enum class VKExt
     EXT_debug_utils,
     EXT_nested_command_buffer,
     EXT_transform_feedback,
+    EXT_queue_family_foreign,
+
+    /* Platform specific extensions */
+    ANDROID_external_memory_android_hardware_buffer,
 
     /* Enumeration entry counter */
     Count,

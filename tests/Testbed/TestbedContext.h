@@ -205,6 +205,9 @@ class TestbedContext
             MSMeshlet,
             PSMeshlet,
 
+            VSYcbcrTexture,
+            PSYcbcrTexture,
+
             ShaderCount,
         };
 

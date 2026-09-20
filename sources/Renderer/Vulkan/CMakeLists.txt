@@ -64,6 +64,10 @@ endif()
 if(APPLE)
     find_source_files(FilesRendererVKPlatform OBJC "${PROJECT_SOURCE_DIR}/Platform/Apple")
     list(APPEND FilesVK ${FilesRendererVKPlatform})
+elseif(LLGL_ANDROID_PLATFORM)
+    # Android hardware buffer import (VK_ANDROID_external_memory_android_hardware_buffer)
+    find_source_files(FilesRendererVKPlatform CXX "${PROJECT_SOURCE_DIR}/Platform/Android")
+    list(APPEND FilesVK ${FilesRendererVKPlatform})
 endif()
 
 
@@ -97,8 +101,9 @@ if(LLGL_BUILD_RENDERER_VULKAN)
     # Vulkan Renderer
     if(LLGL_ANDROID_PLATFORM)
         add_llgl_module(LLGL_Vulkan LLGL_BUILD_RENDERER_VULKAN "${FilesVK}")
-        
-        target_link_libraries(LLGL_Vulkan LLGL vulkan)
+
+        # 'android' provides AHardwareBuffer_* functions (API level 26+)
+        target_link_libraries(LLGL_Vulkan LLGL vulkan android)
     else()
         find_package(Vulkan REQUIRED)
         if(Vulkan_FOUND)

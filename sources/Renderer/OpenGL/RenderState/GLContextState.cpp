@@ -216,6 +216,12 @@ static const GLenum g_textureTargetBindings[] =
     #else
     0,
     #endif
+
+    #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+    0x8D67, // GL_TEXTURE_BINDING_EXTERNAL_OES
+    #else
+    0,
+    #endif
 };
 
 static_assert(
@@ -503,10 +509,10 @@ LLGL_EXPORT void GLSetContextState(const GLContextState& inContextState)
 
         for_range(target, GLContextState::numTextureTargets)
         {
-            glBindTexture(
-                GLStateManager::ToGLTextureTarget(static_cast<GLTextureTarget>(target)),
-                inContextState.textureLayers[layer].boundTextures[target]
-            );
+            /* Skip texture targets that are not available for this GL profile */
+            const GLenum targetGL = GLStateManager::ToGLTextureTarget(static_cast<GLTextureTarget>(target));
+            if (targetGL != 0)
+                glBindTexture(targetGL, inContextState.textureLayers[layer].boundTextures[target]);
         }
     }
 

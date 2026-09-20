@@ -11,6 +11,7 @@
 
 #include <LLGL/Texture.h>
 #include "GLImageViewConverter.h"
+#include "../RenderState/GLState.h"
 #include "../OpenGL.h"
 
 
@@ -42,6 +43,9 @@ class GLTexture final : public Texture
 
         // Initializes the texture storage with an optional image data; the texture will be bound to the current active texture unit.
         void BindAndAllocStorage(const TextureDescriptor& textureDesc, const ImageView* initialImage = nullptr);
+
+        // Attaches the specified external image to this texture; the texture will be bound to the current active texture unit.
+        void BindAndImportExternalImage(const ExternalImageDescriptor& externalImageDesc);
 
         // Copies the specified source texture into this texture.
         void CopyImageSubData(
@@ -82,6 +86,9 @@ class GLTexture final : public Texture
         // Returns the GL_TEXTURE_TARGET parameter of this texture.
         GLenum GetGLTexTarget() const;
 
+        // Returns the texture target this texture is bound to, e.g. GLTextureTarget::TextureExternalOES for external textures.
+        GLTextureTarget GetGLTextureTarget() const;
+
         /*
         Returns the GL_TEXTURE_TARGET parameter of this texture for MIP-map levels,
         i.e. GL_TEXTURE_CUBE_MAP will be substituted with the first cube face GL_TEXTURE_CUBE_MAP_POSITIVE_X.
@@ -121,6 +128,12 @@ class GLTexture final : public Texture
             return swizzleFormat_;
         }
 
+        // Returns true if this texture was created from an external image (see TextureDescriptor::external).
+        inline bool IsExternal() const
+        {
+            return isExternal_;
+        }
+
         void SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize) override;
 
     public:
@@ -151,6 +164,11 @@ class GLTexture final : public Texture
         GLenum                      internalFormat_         = 0;
 
         bool                        isExternalHandle_ = false;
+
+        const bool                  isExternal_             = false;                    // Texture refers to an external image via GL_TEXTURE_EXTERNAL_OES
+        void*                       externalImage_          = nullptr;                  // EGLImage of the external image
+        void*                       externalHandle_         = nullptr;                  // Reference to the external image handle, e.g. AHardwareBuffer*
+        GLint                       externalExtent_[2]      = {};
 
         const GLsizei               numMipLevels_           = 1;
         const bool                  isRenderbuffer_         = false;

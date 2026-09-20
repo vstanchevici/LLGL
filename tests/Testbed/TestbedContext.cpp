@@ -428,6 +428,7 @@ unsigned TestbedContext::RunAllTests()
     RUN_TEST( ResourceCopy                );
     RUN_TEST( CombinedTexSamplers         );
     RUN_TEST( MeshShaders                 );
+    RUN_TEST( YcbcrTexture                );
 
     // Reset main renderer and run C99 tests
     // LLGL can't run the same render system in multiple instances (confuses the context management in GL backend)
@@ -1210,6 +1211,8 @@ bool TestbedContext::LoadShaders()
         shaders[PSStreamOutput]     = LoadShaderFromFile("StreamOutput.450core.frag.spv",          ShaderType::Fragment,        nullptr, nullptr, nullptr, VertFmtColored, VertFmtColoredSO);
         shaders[CSSamplerBuffer]    = LoadShaderFromFile("SamplerBuffer.450core.comp.spv",         ShaderType::Compute);
         shaders[CSReadAfterWrite]   = LoadShaderFromFile("ReadAfterWrite.450core.comp.spv",        ShaderType::Compute);
+        shaders[VSYcbcrTexture]     = LoadShaderFromFile("YcbcrTexture.450core.vert.spv",          ShaderType::Vertex,   nullptr, nullptr, nullptr, VertFmtEmpty);
+        shaders[PSYcbcrTexture]     = LoadShaderFromFile("YcbcrTexture.450core.frag.spv",          ShaderType::Fragment, nullptr, nullptr, nullptr, VertFmtEmpty);
         shaders[VSVertexFormat0]    = LoadShaderFromFile("VertexFormats.Format0.450core.vert.spv", ShaderType::Vertex,          nullptr, nullptr, nullptr, VertFmtLayout0);
         shaders[VSVertexFormat1]    = LoadShaderFromFile("VertexFormats.Format0.450core.vert.spv", ShaderType::Vertex,          nullptr, nullptr, nullptr, VertFmtLayout1);
         shaders[VSVertexFormat2]    = LoadShaderFromFile("VertexFormats.Format1.450core.vert.spv", ShaderType::Vertex,          nullptr, nullptr, nullptr, VertFmtLayout2);

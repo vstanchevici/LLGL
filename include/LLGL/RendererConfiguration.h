@@ -111,6 +111,26 @@ struct RendererConfigurationVulkan
     \todo Remove this as soon as Vulkan memory manage has been improved.
     */
     bool                        reduceDeviceMemoryFragmentation = false;
+
+    /**
+    \brief List of device extensions that were enabled for a custom Vulkan device.
+    \remarks This is only used when the render system is created with a custom native handle (see Vulkan::RenderSystemNativeHandle),
+    e.g. when the logical device was created by an OpenXR runtime via \c xrCreateVulkanDeviceKHR.
+    LLGL cannot enable any extensions for such a device, so it only uses the extensions listed here. The strings are only read during the creation of the render system.
+    \remarks For example, the following extensions are required for external Android hardware buffers with Vulkan 1.1:
+    \c VK_ANDROID_external_memory_android_hardware_buffer, \c VK_EXT_queue_family_foreign, and optionally \c VK_KHR_external_semaphore_fd.
+    */
+    ArrayView<const char*>      enabledDeviceExtensions;
+
+    /**
+    \brief Optional pointer to the chain of device features that were enabled for a custom Vulkan device. By default null.
+    \remarks This must point to the first structure of the \c pNext chain that was passed to \c VkDeviceCreateInfo, e.g. a \c VkPhysicalDeviceFeatures2 structure.
+    The chain is only read during the creation of the render system.
+    \remarks This is only used when the render system is created with a custom native handle (see Vulkan::RenderSystemNativeHandle).
+    LLGL searches this chain for \c VkPhysicalDeviceSamplerYcbcrConversionFeatures and \c VkPhysicalDeviceVulkan11Features
+    to determine whether sampler Y'CbCr conversions can be used (see RenderingFeatures::hasSamplerYcbcrConversion).
+    */
+    const void*                 enabledDeviceFeatures           = nullptr;
 };
 
 /**

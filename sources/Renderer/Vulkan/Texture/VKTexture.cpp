@@ -15,7 +15,14 @@
 #include <LLGL/Backend/Vulkan/NativeHandle.h>
 #include "../VKTypes.h"
 #include "../VKCore.h"
+#include "../../../Core/Assertion.h"
+#include "../../../Core/Exception.h"
+#include "../../../Core/PrintfUtils.h"
 #include <algorithm>
+
+#if VK_ANDROID_external_memory_android_hardware_buffer
+#   include "../Platform/Android/VKAndroidHardwareBuffer.h"
+#endif
 
 
 namespace LLGL
@@ -34,21 +41,46 @@ static VKSwizzleFormat MapToVKSwizzleFormat(const Format format)
 VKTexture::VKTexture(
     VkDevice                    device,
     VKDeviceMemoryManager&      deviceMemoryMngr,
-    const TextureDescriptor&    desc)
+    const TextureDescriptor&    desc,
+    VKYcbcrConversionPool*      ycbcrConversionPool)
 :
-    Texture        { desc.type, desc.bindFlags         },
-    device_        { device                            },
-    image_         { device                            },
-    imageView_     { device, vkDestroyImageView        },
-    format_        { VKTypes::Map(desc.format)         },
-    swizzleFormat_ { MapToVKSwizzleFormat(desc.format) },
-    deviceMemoryMngr_{ deviceMemoryMngr                }
+    Texture          { desc.type, desc.bindFlags         },
+    device_          { device                            },
+    externalMemory_  { device, vkFreeMemory              },
+    isExternal_      { (desc.external != nullptr)        },
+    image_           { device                            },
+    imageView_       { device, vkDestroyImageView        },
+    format_          { VKTypes::Map(desc.format)         },
+    swizzleFormat_   { MapToVKSwizzleFormat(desc.format) },
+    deviceMemoryMngr_{ deviceMemoryMngr                  }
 {
-    /* Create Vulkan image and allocate memory region */
-    CreateImage(device, desc);
-    image_.AllocateMemoryRegion(deviceMemoryMngr);
+    if (desc.external != nullptr)
+    {
+        /* Import external image with its own dedicated memory; this also acquires the Y'CbCr conversion */
+        CreateExternalImage(device, desc, ycbcrConversionPool);
+    }
+    else
+    {
+        /* Acquire Y'CbCr conversion that is shared with the samplers this texture will be sampled with */
+        if (desc.ycbcrConversion != nullptr && IsYcbcrConversionRequired(*desc.ycbcrConversion))
+        {
+            LLGL_ASSERT_PTR(ycbcrConversionPool);
+            ycbcrConversion_ = ycbcrConversionPool->Acquire(*desc.ycbcrConversion);
+        }
+
+        /* Create Vulkan image and allocate memory region */
+        CreateImage(device, desc);
+        image_.AllocateMemoryRegion(deviceMemoryMngr);
+    }
+
     if (desc.debugName != nullptr)
         SetDebugName(desc.debugName);
+}
+
+VKTexture::~VKTexture()
+{
+    /* Image and dedicated memory hold their own reference to the external image, so the texture's reference can be released first */
+    ReleaseExternalHandle();
 }
 
 bool VKTexture::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
@@ -256,13 +288,30 @@ static void ConvertVkComponentMapping(VkComponentMapping& dst, const TextureSwiz
     }
 }
 
+// Returns the identity component mapping. Swizzling for Y'CbCr images is part of the conversion, not of the image view.
+static VkComponentMapping GetIdentityVkComponentMapping()
+{
+    VkComponentMapping components;
+    {
+        components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+    }
+    return components;
+}
+
 void VKTexture::CreateImageView(
     VkDevice                    device,
     const TextureSubresource&   subresource,
     Format                      format,
     VKPtr<VkImageView>&         outImageView)
 {
-    const VkFormat viewVkFormat = VKTypes::Map(format);
+    /* Images with Y'CbCr conversion must be viewed with their own format and the same conversion */
+    VkSamplerYcbcrConversionInfo conversionInfo;
+    const void* pNext = GetYcbcrConversionInfo(conversionInfo);
+
+    const VkFormat viewVkFormat = (pNext != nullptr ? format_ : VKTypes::Map(format));
     VkImageSubresourceRange subresourceRange;
     {
         subresourceRange.aspectMask     = VKImageUtils::GetExclusiveVkImageAspect(viewVkFormat); //TODO: allow stencil-component to be selected
@@ -272,14 +321,18 @@ void VKTexture::CreateImageView(
         subresourceRange.layerCount     = subresource.numArrayLayers;
     }
     VkComponentMapping components = {};
-    ConvertVkComponentMapping(components, TextureSwizzleRGBA{}, swizzleFormat_);
+    if (pNext != nullptr)
+        components = GetIdentityVkComponentMapping();
+    else
+        ConvertVkComponentMapping(components, TextureSwizzleRGBA{}, swizzleFormat_);
     image_.CreateVkImageView(
         device,
         VKTypes::Map(GetType()),
         viewVkFormat,
         subresourceRange,
         outImageView,
-        &components
+        &components,
+        pNext
     );
 }
 
@@ -288,7 +341,11 @@ void VKTexture::CreateImageView(
     const TextureViewDescriptor&    textureViewDesc,
     VKPtr<VkImageView>&             outImageView)
 {
-    const VkFormat viewVkFormat = VKTypes::Map(textureViewDesc.format);
+    /* Images with Y'CbCr conversion must be viewed with their own format and the same conversion */
+    VkSamplerYcbcrConversionInfo conversionInfo;
+    const void* pNext = GetYcbcrConversionInfo(conversionInfo);
+
+    const VkFormat viewVkFormat = (pNext != nullptr ? format_ : VKTypes::Map(textureViewDesc.format));
     VkImageSubresourceRange subresourceRange;
     {
         subresourceRange.aspectMask     = VKImageUtils::GetExclusiveVkImageAspect(viewVkFormat); //TODO: allow stencil-component to be selected
@@ -298,14 +355,18 @@ void VKTexture::CreateImageView(
         subresourceRange.layerCount     = textureViewDesc.subresource.numArrayLayers;
     }
     VkComponentMapping components = {};
-    ConvertVkComponentMapping(components, textureViewDesc.swizzle, swizzleFormat_);
+    if (pNext != nullptr)
+        components = GetIdentityVkComponentMapping();
+    else
+        ConvertVkComponentMapping(components, textureViewDesc.swizzle, swizzleFormat_);
     image_.CreateVkImageView(
         device,
-        VKTypes::Map(textureViewDesc.type),
+        (pNext != nullptr ? VKTypes::Map(GetType()) : VKTypes::Map(textureViewDesc.type)),
         viewVkFormat,
         subresourceRange,
         outImageView,
-        &components
+        &components,
+        pNext
     );
 }
 
@@ -345,10 +406,22 @@ void VKTexture::CreateInternalImageView(VkDevice device)
             subresourceRange.baseArrayLayer = 0;
             subresourceRange.layerCount     = GetNumArrayLayers();
         }
+        VkSamplerYcbcrConversionInfo conversionInfo;
+        const void* pNext = GetYcbcrConversionInfo(conversionInfo);
+
         VkComponentMapping components = {};
-        ConvertVkComponentMapping(components, TextureSwizzleRGBA{}, swizzleFormat_);
-        image_.CreateVkImageView(device, VKTypes::Map(GetType()), format_, subresourceRange, imageView_, &components);
+        if (pNext != nullptr)
+            components = GetIdentityVkComponentMapping();
+        else
+            ConvertVkComponentMapping(components, TextureSwizzleRGBA{}, swizzleFormat_);
+
+        image_.CreateVkImageView(device, VKTypes::Map(GetType()), format_, subresourceRange, imageView_, &components, pNext);
     }
+}
+
+bool VKTexture::IsMultiPlanar() const
+{
+    return VKImageUtils::IsMultiPlanarVkFormat(format_);
 }
 
 VkImageLayout VKTexture::TransitionImageLayout(
@@ -527,6 +600,21 @@ void VKTexture::CreateImage(VkDevice device, const TextureDescriptor& desc)
     sampleCountBits_    = GetVkImageSampleCountFlags(desc);
     usageFlags_         = GetVkImageUsageFlags(desc);
 
+    VkImageCreateFlags createFlags = GetVkImageCreateFlags(desc);
+
+    if (IsMultiPlanar())
+    {
+        /*
+        Multi-planar images are only sampled with a Y'CbCr conversion and uploaded plane by plane.
+        They cannot have MIP-maps, array layers, or be used as attachments or storage images.
+        */
+        numMipLevels_       = 1;
+        numArrayLayers_     = 1;
+        sampleCountBits_    = VK_SAMPLE_COUNT_1_BIT;
+        usageFlags_         = (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        createFlags         = 0;
+    }
+
     /* Create image object */
     image_.CreateVkImage(
         device,
@@ -535,10 +623,132 @@ void VKTexture::CreateImage(VkDevice device, const TextureDescriptor& desc)
         extent_,
         numMipLevels_,
         numArrayLayers_,
-        GetVkImageCreateFlags(desc),
+        createFlags,
         sampleCountBits_,
         usageFlags_
     );
+}
+
+void VKTexture::CreateExternalImage(VkDevice device, const TextureDescriptor& desc, VKYcbcrConversionPool* ycbcrConversionPool)
+{
+    const ExternalImageDescriptor& externalDesc = *desc.external;
+
+    #if VK_ANDROID_external_memory_android_hardware_buffer
+
+    if (externalDesc.type != ExternalImageType::AndroidHardwareBuffer || externalDesc.handle == nullptr)
+        LLGL_TRAP("cannot create Vulkan texture from external image with null handle or unsupported type");
+
+    auto* buffer = static_cast<AHardwareBuffer*>(externalDesc.handle);
+
+    /* Query properties of hardware buffer and register its format features for Y'CbCr conversions of this external format */
+    VKAndroidHardwareBufferProperties props;
+    if (!VKQueryAndroidHardwareBufferProperties(device, buffer, props))
+        LLGL_TRAP("failed to query properties of Android hardware buffer for Vulkan texture");
+
+    if (ycbcrConversionPool != nullptr)
+        ycbcrConversionPool->RegisterExternalFormatFeatures(props.externalFormat, props.formatFeatures);
+
+    if (desc.ycbcrConversion != nullptr && IsYcbcrConversionRequired(*desc.ycbcrConversion))
+    {
+        LLGL_ASSERT_PTR(ycbcrConversionPool);
+        ycbcrConversion_ = ycbcrConversionPool->Acquire(*desc.ycbcrConversion);
+    }
+
+    /* Images with an opaque format must use the external format, which requires a Y'CbCr conversion */
+    const bool useExternalFormat = (props.format == VK_FORMAT_UNDEFINED || (ycbcrConversion_ && ycbcrConversion_->GetDesc().externalFormat != 0));
+    if (useExternalFormat)
+    {
+        if (!ycbcrConversion_)
+            LLGL_TRAP("Android hardware buffer with opaque format requires a Y'CbCr conversion (see TextureDescriptor::ycbcrConversion)");
+        if (ycbcrConversion_->GetDesc().externalFormat != props.externalFormat)
+        {
+            LLGL_TRAP(
+                "mismatch between external format of Y'CbCr conversion (0x%016" PRIX64 ") and Android hardware buffer (0x%016" PRIX64 ")",
+                ycbcrConversion_->GetDesc().externalFormat, props.externalFormat
+            );
+        }
+    }
+
+    format_             = (useExternalFormat ? VK_FORMAT_UNDEFINED : props.format);
+    extent_             = props.extent;
+    numMipLevels_       = 1;
+    numArrayLayers_     = 1;
+    sampleCountBits_    = VK_SAMPLE_COUNT_1_BIT;
+    usageFlags_         = VK_IMAGE_USAGE_SAMPLED_BIT; // Images with an external format must only be sampled
+
+    /* Create image that can be bound to the memory of the hardware buffer */
+    VkExternalFormatANDROID externalFormatInfo;
+    {
+        externalFormatInfo.sType            = VK_STRUCTURE_TYPE_EXTERNAL_FORMAT_ANDROID;
+        externalFormatInfo.pNext            = nullptr;
+        externalFormatInfo.externalFormat   = (useExternalFormat ? props.externalFormat : 0);
+    }
+    VkExternalMemoryImageCreateInfo externalImageInfo;
+    {
+        externalImageInfo.sType             = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
+        externalImageInfo.pNext             = &externalFormatInfo;
+        externalImageInfo.handleTypes       = VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
+    }
+    image_.CreateVkImage(
+        device,
+        VK_IMAGE_TYPE_2D,
+        format_,
+        extent_,
+        numMipLevels_,
+        numArrayLayers_,
+        0,
+        sampleCountBits_,
+        usageFlags_,
+        &externalImageInfo
+    );
+
+    /* Import memory of hardware buffer as dedicated allocation */
+    VKImportAndroidHardwareBufferMemory(device, buffer, props, image_.GetVkImage(), externalMemory_);
+
+    /* Keep a reference to the hardware buffer as long as this texture is alive */
+    VKAcquireAndroidHardwareBuffer(buffer);
+    externalHandle_ = buffer;
+
+    /*
+    The content of the external image is owned by its producer (e.g. a video decoder) and is transferred from the foreign queue family
+    with oldLayout=GENERAL in each CommandBuffer::AcquireExternalTexture, so the layout is tracked as GENERAL from the beginning.
+    VK_IMAGE_LAYOUT_UNDEFINED is not used here, because it permits the implementation to discard the content the producer wrote.
+    Note that the native image starts out in VK_IMAGE_LAYOUT_UNDEFINED, so if a validation layer reports a layout mismatch
+    for the first acquisition of an image, the first transition must use VK_IMAGE_LAYOUT_UNDEFINED instead.
+    */
+    image_.OverrideVkImageLayout(VK_IMAGE_LAYOUT_GENERAL);
+
+    #else // VK_ANDROID_external_memory_android_hardware_buffer
+
+    (void)device;
+    (void)externalDesc;
+    (void)ycbcrConversionPool;
+    LLGL_TRAP("external images are not supported by the Vulkan backend on this platform");
+
+    #endif // /VK_ANDROID_external_memory_android_hardware_buffer
+}
+
+void VKTexture::ReleaseExternalHandle()
+{
+    #if VK_ANDROID_external_memory_android_hardware_buffer
+    if (externalHandle_ != nullptr)
+    {
+        VKReleaseAndroidHardwareBuffer(static_cast<AHardwareBuffer*>(externalHandle_));
+        externalHandle_ = nullptr;
+    }
+    #endif
+}
+
+const void* VKTexture::GetYcbcrConversionInfo(VkSamplerYcbcrConversionInfo& outInfo) const
+{
+    if (ycbcrConversion_)
+    {
+        outInfo.sType       = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_INFO;
+        outInfo.pNext       = nullptr;
+        outInfo.conversion  = ycbcrConversion_->GetVkSamplerYcbcrConversion();
+        return &outInfo;
+    }
+    return nullptr;
 }
 
 

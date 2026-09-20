@@ -46,6 +46,7 @@ LLGL_C_EXPORT LLGLTexture llglCreateTexture(const LLGLTextureDescriptor* texture
 LLGL_C_EXPORT void llglReleaseTexture(LLGLTexture texture);
 LLGL_C_EXPORT void llglWriteTexture(LLGLTexture texture, const LLGLTextureRegion* textureRegion, const LLGLImageView* srcImageView);
 LLGL_C_EXPORT void llglReadTexture(LLGLTexture texture, const LLGLTextureRegion* textureRegion, const LLGLMutableImageView* dstImageView);
+LLGL_C_EXPORT bool llglQueryExternalImageProperties(const LLGLExternalImageDescriptor* externalImageDesc, LLGLExternalImageProperties* outProperties);
 
 LLGL_C_EXPORT LLGLSampler llglCreateSampler(const LLGLSamplerDescriptor* samplerDesc);
 LLGL_C_EXPORT void llglReleaseSampler(LLGLSampler sampler);

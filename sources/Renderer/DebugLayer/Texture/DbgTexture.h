@@ -10,6 +10,7 @@
 
 
 #include <LLGL/Texture.h>
+#include <LLGL/SamplerFlags.h>
 #include <string>
 #include <set>
 
@@ -38,11 +39,14 @@ class DbgTexture final : public Texture
     public:
 
         Texture&                instance;
-        const TextureDescriptor desc;
-        TextureViewDescriptor   viewDesc;
-        std::uint32_t           mipLevels           = 1;        // Actual number of MIP-map levels.
-        std::string             label;
-        const bool              isTextureView       = false;
+        const TextureDescriptor     desc;                           // Copy of the descriptor without the external and ycbcrConversion pointers.
+        TextureViewDescriptor       viewDesc;
+        std::uint32_t               mipLevels           = 1;        // Actual number of MIP-map levels.
+        std::string                 label;
+        const bool                  isTextureView       = false;
+        const bool                  isExternal          = false;    // Texture was created with TextureDescriptor::external.
+        const bool                  hasYcbcrConversion  = false;    // Texture was created with TextureDescriptor::ycbcrConversion.
+        YcbcrConversionDescriptor   ycbcrConversion;                // Copy of TextureDescriptor::ycbcrConversion if hasYcbcrConversion is true.
 
     private:
 

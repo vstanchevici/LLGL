@@ -35,6 +35,8 @@ glslangValidator -V -DENABLE_SPIRV=1 -o ReadAfterWrite\ReadAfterWrite.450core.co
 glslangValidator -V -o VertexFormats\VertexFormats.Format0.450core.vert.spv VertexFormats\VertexFormats.450core.vert
 glslangValidator -V -DVERTEX_FORMAT=1 -o VertexFormats\VertexFormats.Format1.450core.vert.spv VertexFormats\VertexFormats.450core.vert
 glslangValidator -V -o VertexFormats\VertexFormats.450core.frag.spv VertexFormats\VertexFormats.450core.frag
+glslangValidator -V -DENABLE_SPIRV=1 -o YcbcrTexture\YcbcrTexture.450core.vert.spv YcbcrTexture\YcbcrTexture.450core.vert
+glslangValidator -V -DENABLE_SPIRV=1 -o YcbcrTexture\YcbcrTexture.450core.frag.spv YcbcrTexture\YcbcrTexture.450core.frag
 
 echo DONE
 pause

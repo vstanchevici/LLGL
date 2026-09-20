@@ -256,8 +256,16 @@ void DbgRenderSystem::UnmapBuffer(Buffer& buffer)
 Texture* DbgRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, const ImageView* initialImage)
 {
     if (LLGL_DBG_SOURCE())
-        ValidateTextureDesc(textureDesc, initialImage);
-    return textures_.emplace<DbgTexture>(*instance_->CreateTexture(textureDesc, initialImage), textureDesc);
+    {
+        if (textureDesc.external != nullptr)
+            ValidateExternalTextureDesc(textureDesc, initialImage);
+        else
+            ValidateTextureDesc(textureDesc, initialImage);
+    }
+    Texture* textureInstance = instance_->CreateTexture(textureDesc, initialImage);
+    if (textureInstance == nullptr)
+        return nullptr;
+    return textures_.emplace<DbgTexture>(*textureInstance, textureDesc);
 }
 
 void DbgRenderSystem::Release(Texture& texture)
@@ -297,8 +305,20 @@ void DbgRenderSystem::ReadTexture(Texture& texture, const TextureRegion& texture
 
 /* ----- Sampler States ---- */
 
+bool DbgRenderSystem::QueryExternalImageProperties(const ExternalImageDescriptor& externalImageDesc, ExternalImageProperties& outProperties)
+{
+    if (LLGL_DBG_SOURCE())
+    {
+        if (externalImageDesc.type == ExternalImageType::Undefined || externalImageDesc.handle == nullptr)
+            LLGL_DBG_ERROR(ErrorType::InvalidArgument, "cannot query properties of external image with null handle or undefined type");
+    }
+    return instance_->QueryExternalImageProperties(externalImageDesc, outProperties);
+}
+
 Sampler* DbgRenderSystem::CreateSampler(const SamplerDescriptor& samplerDesc)
 {
+    if (LLGL_DBG_SOURCE())
+        ValidateSamplerDesc(samplerDesc);
     return instance_->CreateSampler(samplerDesc);
     //return samplers_.emplace<DbgSampler>();
 }
@@ -1024,6 +1044,33 @@ void DbgRenderSystem::ValidateTextureDesc(const TextureDescriptor& textureDesc, 
 
     ValidateTextureFormatSupported(textureDesc.format);
     ValidateTextureDescMipLevels(textureDesc);
+
+    if (IsMultiPlanarFormat(textureDesc.format))
+    {
+        if (textureDesc.type != TextureType::Texture2D)
+            LLGL_DBG_ERROR(ErrorType::InvalidArgument, "multi-planar format %s can only be used for 2D textures", ToString(textureDesc.format));
+        if (textureDesc.ycbcrConversion == nullptr)
+            LLGL_DBG_ERROR(ErrorType::InvalidArgument, "multi-planar format %s requires a Y'CbCr conversion (see TextureDescriptor::ycbcrConversion)", ToString(textureDesc.format));
+        if (textureDesc.mipLevels > 1)
+            LLGL_DBG_ERROR(ErrorType::InvalidArgument, "multi-planar format %s cannot have more than one MIP-map level", ToString(textureDesc.format));
+        if ((textureDesc.bindFlags & (BindFlags::ColorAttachment | BindFlags::DepthStencilAttachment | BindFlags::Storage)) != 0)
+            LLGL_DBG_ERROR(ErrorType::InvalidArgument, "multi-planar format %s can only be used for sampled textures", ToString(textureDesc.format));
+        if ((textureDesc.extent.width % 2) != 0 || (textureDesc.extent.height % 2) != 0)
+            LLGL_DBG_ERROR(ErrorType::InvalidArgument, "multi-planar 4:2:0 format %s requires even width and height", ToString(textureDesc.format));
+    }
+
+    if (textureDesc.ycbcrConversion != nullptr)
+    {
+        ValidateYcbcrConversionDesc(*textureDesc.ycbcrConversion, "texture");
+        if (textureDesc.ycbcrConversion->externalFormat == 0 && textureDesc.ycbcrConversion->format != textureDesc.format)
+        {
+            LLGL_DBG_ERROR(
+                ErrorType::InvalidArgument,
+                "mismatch between texture format (%s) and format of Y'CbCr conversion (%s)",
+                ToString(textureDesc.format), ToString(textureDesc.ycbcrConversion->format)
+            );
+        }
+    }
     ValidateArrayTextureLayers(textureDesc.type, textureDesc.arrayLayers);
     ValidateBindFlags(textureDesc.bindFlags, textureDesc.format, ResourceType::Texture);
     ValidateMiscFlags(textureDesc.miscFlags, (MiscFlags::DynamicUsage | MiscFlags::FixedSamples | MiscFlags::GenerateMips | MiscFlags::NoInitialData), "texture");
@@ -1048,6 +1095,65 @@ void DbgRenderSystem::ValidateTextureDesc(const TextureDescriptor& textureDesc, 
             LLGL_DBG_WARN(
                 WarningType::ImproperArgument,
                 "cannot generate MIP-maps with initial image data discarded: 'LLGL::MiscFlags::GenerateMips' specified but also 'MiscFlags::NoInitialData'"
+            );
+        }
+    }
+}
+
+void DbgRenderSystem::ValidateExternalTextureDesc(const TextureDescriptor& textureDesc, const ImageView* initialImage)
+{
+    const ExternalImageDescriptor& externalDesc = *textureDesc.external;
+
+    if (!GetRenderingCaps().features.hasExternalImageAndroid)
+        LLGL_DBG_ERROR(ErrorType::UnsupportedFeature, "external images are not supported by this renderer");
+    if (externalDesc.type == ExternalImageType::Undefined || externalDesc.handle == nullptr)
+        LLGL_DBG_ERROR(ErrorType::InvalidArgument, "cannot create external texture with null handle or undefined type");
+    if (textureDesc.type != TextureType::Texture2D)
+        LLGL_DBG_ERROR(ErrorType::InvalidArgument, "external textures must be of type 'Texture2D'");
+    if (textureDesc.bindFlags != BindFlags::Sampled)
+        LLGL_DBG_ERROR(ErrorType::InvalidArgument, "external textures can only have binding flag 'Sampled'");
+    if (initialImage != nullptr)
+        LLGL_DBG_ERROR(ErrorType::InvalidArgument, "cannot specify initial image data for external textures");
+    if (textureDesc.ycbcrConversion != nullptr)
+        ValidateYcbcrConversionDesc(*textureDesc.ycbcrConversion, "external texture");
+}
+
+void DbgRenderSystem::ValidateYcbcrConversionDesc(const YcbcrConversionDescriptor& ycbcrDesc, const char* contextDesc)
+{
+    /*
+    Backends without configurable Y'CbCr conversions (e.g. GLES) still accept the descriptor for external images,
+    since the driver performs the conversion implicitly (see ExternalImageProperties::ycbcrConversion).
+    */
+    const RenderingFeatures& features = GetRenderingCaps().features;
+    if (!features.hasSamplerYcbcrConversion && !features.hasExternalImageAndroid)
+        LLGL_DBG_ERROR(ErrorType::UnsupportedFeature, "Y'CbCr sampler conversions are not supported by this renderer (%s)", contextDesc);
+
+    if (ycbcrDesc.externalFormat != 0)
+    {
+        if (ycbcrDesc.format != Format::Undefined)
+            LLGL_DBG_ERROR(ErrorType::InvalidArgument, "Y'CbCr conversion for %s must have undefined format when an external format is specified", contextDesc);
+    }
+    else if (ycbcrDesc.format == Format::Undefined)
+    {
+        LLGL_DBG_ERROR(ErrorType::InvalidArgument, "Y'CbCr conversion for %s requires either a format or an external format", contextDesc);
+    }
+}
+
+void DbgRenderSystem::ValidateSamplerDesc(const SamplerDescriptor& samplerDesc)
+{
+    if (samplerDesc.ycbcrConversion != nullptr)
+    {
+        ValidateYcbcrConversionDesc(*samplerDesc.ycbcrConversion, "sampler");
+
+        if (samplerDesc.addressModeU != SamplerAddressMode::Clamp ||
+            samplerDesc.addressModeV != SamplerAddressMode::Clamp ||
+            samplerDesc.addressModeW != SamplerAddressMode::Clamp ||
+            samplerDesc.maxAnisotropy > 1 ||
+            samplerDesc.compareEnabled)
+        {
+            LLGL_DBG_WARN(
+                WarningType::ImproperArgument,
+                "sampler with Y'CbCr conversion requires clamped address modes and no anisotropy or compare operation; these attributes will be overridden"
             );
         }
     }
@@ -1727,6 +1833,41 @@ void DbgRenderSystem::ValidatePipelineLayoutDesc(const PipelineLayoutDescriptor&
                 ErrorType::InvalidArgument,
                 "individual binding %s has array size of %u, but only heap-bindings can have an array size other than 0 or 1",
                 bindingLabel.c_str(), binding.arraySize
+            );
+        }
+    }
+
+    /* Validate immutable samplers for combined texture-sampler bindings */
+    auto ValidateImmutableSamplerBinding = [this](const BindingDescriptor& binding)
+    {
+        if (binding.immutableSampler != nullptr)
+        {
+            if (binding.type != ResourceType::Texture || (binding.bindFlags & BindFlags::Sampled) == 0 || (binding.bindFlags & BindFlags::Storage) != 0)
+            {
+                const std::string bindingLabel = GetBindingDescLabel(binding);
+                LLGL_DBG_ERROR(
+                    ErrorType::InvalidArgument,
+                    "binding %s has an immutable sampler, but only sampled textures can be combined with immutable samplers",
+                    bindingLabel.c_str()
+                );
+            }
+        }
+    };
+
+    for (const BindingDescriptor& binding : pipelineLayoutDesc.heapBindings)
+        ValidateImmutableSamplerBinding(binding);
+    for (const BindingDescriptor& binding : pipelineLayoutDesc.bindings)
+        ValidateImmutableSamplerBinding(binding);
+
+    /* Static samplers cannot have Y'CbCr conversions, because they are not combined with a texture */
+    for (const StaticSamplerDescriptor& staticSampler : pipelineLayoutDesc.staticSamplers)
+    {
+        if (staticSampler.sampler.ycbcrConversion != nullptr)
+        {
+            LLGL_DBG_ERROR(
+                ErrorType::InvalidArgument,
+                "static sampler '%s' cannot have a Y'CbCr conversion; use BindingDescriptor::immutableSampler instead",
+                staticSampler.name.c_str()
             );
         }
     }

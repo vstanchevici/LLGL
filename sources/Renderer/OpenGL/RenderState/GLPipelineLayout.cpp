@@ -10,6 +10,7 @@
 #include "../Ext/GLExtensionRegistry.h"
 #include "../../ResourceUtils.h"
 #include "../../../Core/CoreUtils.h"
+#include "../../CheckedCast.h"
 #include <LLGL/Utils/ForRange.h>
 #include <algorithm>
 
@@ -74,6 +75,7 @@ GLPipelineLayout::GLPipelineLayout(const PipelineLayoutDescriptor& desc) :
     BuildHeapResourceBindings(desc);
     BuildDynamicResourceBindings(desc);
     BuildStaticSamplers(desc);
+    BuildImmutableSamplers(desc);
 }
 
 std::uint32_t GLPipelineLayout::GetNumHeapBindings() const
@@ -109,6 +111,21 @@ void GLPipelineLayout::BindStaticSamplers(GLStateManager& stateMngr) const
         {
             for_range(i, staticSamplerSlots_.size())
                 stateMngr.BindSampler(staticSamplerSlots_[i], staticSamplers_[i]->GetID());
+        }
+    }
+
+    /* Bind immutable samplers to the texture units of their combined texture-samplers */
+    if (!immutableSamplerSlots_.empty())
+    {
+        if (!HasNativeSamplers())
+        {
+            for_range(i, immutableSamplerSlots_.size())
+                stateMngr.BindEmulatedSampler(immutableSamplerSlots_[i], *LLGL_CAST(const GLEmulatedSampler*, immutableSamplers_[i]));
+        }
+        else
+        {
+            for_range(i, immutableSamplerSlots_.size())
+                stateMngr.BindSampler(immutableSamplerSlots_[i], LLGL_CAST(const GLSampler*, immutableSamplers_[i])->GetID());
         }
     }
 }
@@ -206,6 +223,27 @@ void GLPipelineLayout::BuildDynamicResourceBindings(const PipelineLayoutDescript
         bindings_.push_back(newBinding);
         resourceNames_.push_back(desc.name.c_str());
     }
+}
+
+void GLPipelineLayout::BuildImmutableSamplers(const PipelineLayoutDescriptor& pipelineLayoutDesc)
+{
+    /* In GLSL, a combined texture-sampler is a single uniform on a texture unit, so the immutable sampler is bound to the same unit */
+    auto AppendImmutableSamplers = [this](const std::vector<BindingDescriptor>& bindings)
+    {
+        for (const BindingDescriptor& binding : bindings)
+        {
+            if (binding.type == ResourceType::Texture && binding.immutableSampler != nullptr)
+            {
+                for_range(i, std::max(1u, binding.arraySize))
+                {
+                    immutableSamplerSlots_.push_back(static_cast<GLuint>(binding.slot.index + i));
+                    immutableSamplers_.push_back(binding.immutableSampler);
+                }
+            }
+        }
+    };
+    AppendImmutableSamplers(pipelineLayoutDesc.heapBindings);
+    AppendImmutableSamplers(pipelineLayoutDesc.bindings);
 }
 
 void GLPipelineLayout::BuildStaticSamplers(const PipelineLayoutDescriptor& pipelineLayoutDesc)

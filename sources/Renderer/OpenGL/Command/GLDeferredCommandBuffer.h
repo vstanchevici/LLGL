@@ -11,6 +11,7 @@
 
 #include "GLCommandBuffer.h"
 #include "GLCommandOpcode.h"
+#include "GLCommand.h"
 #include "../../VirtualCommandBuffer.h"
 #include <memory>
 #include <vector>
@@ -90,6 +91,11 @@ class GLDeferredCommandBuffer final : public GLCommandBuffer
 
         long                    flags_                  = 0;
         GLVirtualCommandBuffer  buffer_;
+
+        #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+        // Sync file descriptors of external textures; closed when this command buffer is recorded again or destroyed (see AcquireExternalTexture).
+        std::vector<GLNativeFenceSPtr> nativeFences_;
+        #endif
         GLRenderTarget*         renderTargetToResolve_  = nullptr;
 
 };
