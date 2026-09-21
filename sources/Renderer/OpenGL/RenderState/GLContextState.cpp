@@ -217,8 +217,8 @@ static const GLenum g_textureTargetBindings[] =
     0,
     #endif
 
-    #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
-    0x8D67, // GL_TEXTURE_BINDING_EXTERNAL_OES
+    #if LLGL_GLEXT_TEXTURE_EXTERNAL_OES
+    GL_TEXTURE_BINDING_EXTERNAL_OES,
     #else
     0,
     #endif

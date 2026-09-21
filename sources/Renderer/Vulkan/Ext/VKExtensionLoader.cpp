@@ -138,16 +138,6 @@ static bool DECL_LOADVKEXT_PROC(KHR_get_physical_device_properties2)
     return true;
 }
 
-#if VK_ANDROID_external_memory_android_hardware_buffer
-
-static bool DECL_LOADVKEXT_PROC(ANDROID_external_memory_android_hardware_buffer)
-{
-    LOAD_VKPROC( vkGetAndroidHardwareBufferPropertiesANDROID );
-    return true;
-}
-
-#endif // /VK_ANDROID_external_memory_android_hardware_buffer
-
 static bool DECL_LOADVKEXT_PROC(EXT_transform_feedback)
 {
     LOAD_VKPROC( vkCmdBindTransformFeedbackBuffersEXT );
@@ -270,19 +260,6 @@ bool VKLoadDeviceExtensions(VkDevice device, const ArrayView<const char*>& suppo
     ENABLE_VKEXT( EXT_conservative_rasterization );
     ENABLE_VKEXT( EXT_nested_command_buffer      );
     ENABLE_VKEXT( KHR_imageless_framebuffer      );
-
-    /* Extensions for Y'CbCr conversions and external memory */
-    ENABLE_VKEXT( KHR_external_memory            );
-    ENABLE_VKEXT( KHR_dedicated_allocation       );
-    ENABLE_VKEXT( EXT_queue_family_foreign       );
-
-    #if VK_ANDROID_external_memory_android_hardware_buffer
-    LoadExtension(
-        VKExt::ANDROID_external_memory_android_hardware_buffer,
-        VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME,
-        Load_VK_ANDROID_external_memory_android_hardware_buffer
-    );
-    #endif
 
     /*
     Sampler Y'CbCr conversion is either part of Vulkan 1.1 core or provided by VK_KHR_sampler_ycbcr_conversion,

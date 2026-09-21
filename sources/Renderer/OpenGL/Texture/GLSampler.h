@@ -29,6 +29,9 @@ class GLSampler final : public Sampler
 
         void SetDebugName(const char* name) override;
 
+        // Replaces the GL sampler with a native sampler object (see Resource::SetNativeHandle).
+        bool SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize, bool own = false) override;
+
     public:
 
         GLSampler(const char* debugName = nullptr);
@@ -45,7 +48,8 @@ class GLSampler final : public Sampler
 
     private:
 
-        GLuint id_ = 0;
+        GLuint  id_         = 0;
+        bool    ownsObject_ = true; // False if the sampler object is only referenced (see SetNativeHandle)
 
 };
 

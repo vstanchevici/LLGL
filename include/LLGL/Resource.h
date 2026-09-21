@@ -78,7 +78,28 @@ class LLGL_EXPORT Resource : public RenderSystemChild
         \see OpenGL::ResourceNativeHandle
         */
         virtual bool GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize) = 0;
-        virtual void SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize) {}
+
+        /**
+        \brief Replaces the native object of this resource with the specified native handle, e.g. an image that was created by the application.
+
+        \param[in] nativeHandle Raw pointer to the backend specific structure that describes the native object (same structures as for GetNativeHandle).
+        \param[in] nativeHandleSize Specifies the size (in bytes) of the native handle structure.
+        \param[in] own Specifies whether LLGL takes ownership of the native objects. By default false.
+        If this is false, the native objects are only referenced and the caller must keep them alive as long as this resource
+        (and any pipeline state it has been used with) is in use, and destroy them afterwards.
+        If this is true, the native objects are destroyed together with this resource or when another native handle is set.
+
+        \return True if the native handle was set. Otherwise, the backend does not support this for the resource or the native handle is invalid.
+
+        \remarks The native object that LLGL previously created or referenced for this resource is released (if LLGL owned it).
+        \remarks Supported with:
+        - Vulkan: Textures (Vulkan::ResourceNativeHandle::image, optionally with a Y'CbCr conversion) and samplers (Vulkan::ResourceNativeHandle::sampler).
+        - OpenGL: Textures (OpenGL::ResourceNativeHandle::texture, optionally with an explicit texture target such as \c GL_TEXTURE_EXTERNAL_OES) and native samplers.
+        \remarks The caller is responsible for the synchronization and queue family ownership of the native objects, e.g. when they are shared with a video decoder.
+        \see GetNativeHandle
+        \see BindFlags::SamplerYcbcrConversion
+        */
+        virtual bool SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize, bool own = false);
 };
 
 

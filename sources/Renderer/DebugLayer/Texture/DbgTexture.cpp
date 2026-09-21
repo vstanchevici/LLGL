@@ -14,28 +14,20 @@ namespace LLGL
 
 
 // Returns a copy of the specified texture descriptor without pointers that are only valid during the call to RenderSystem::CreateTexture.
-// For external textures, the dimensions and format are determined by the external image, so they are taken from the texture instance.
-static TextureDescriptor GetDbgTextureDescWithoutTransientPointers(const Texture& instance, const TextureDescriptor& desc)
+static TextureDescriptor GetDbgTextureDescWithoutTransientPointers(const TextureDescriptor& desc)
 {
-    TextureDescriptor descCopy = (desc.external != nullptr ? instance.GetDesc() : desc);
-    {
-        descCopy.debugName          = desc.debugName;
-        descCopy.bindFlags          = desc.bindFlags;
-        descCopy.cpuAccessFlags     = desc.cpuAccessFlags;
-        descCopy.external           = nullptr;
-        descCopy.ycbcrConversion    = nullptr;
-    }
+    TextureDescriptor descCopy = desc;
+    descCopy.ycbcrConversion = nullptr;
     return descCopy;
 }
 
 DbgTexture::DbgTexture(Texture& instance, const TextureDescriptor& desc) :
-    Texture            { desc.type, desc.bindFlags                                    },
-    instance           { instance                                                     },
-    desc               { GetDbgTextureDescWithoutTransientPointers(instance, desc)    },
-    mipLevels          { (desc.external != nullptr ? 1u : NumMipLevels(desc))         },
-    label              { LLGL_DBG_LABEL(desc)                                         },
-    isExternal         { (desc.external != nullptr)                                   },
-    hasYcbcrConversion { (desc.ycbcrConversion != nullptr)                            }
+    Texture            { desc.type, desc.bindFlags                          },
+    instance           { instance                                           },
+    desc               { GetDbgTextureDescWithoutTransientPointers(desc)    },
+    mipLevels          { NumMipLevels(desc)                                 },
+    label              { LLGL_DBG_LABEL(desc)                               },
+    hasYcbcrConversion { (desc.ycbcrConversion != nullptr)                  }
 {
     if (desc.ycbcrConversion != nullptr)
         ycbcrConversion = *desc.ycbcrConversion;
@@ -68,6 +60,14 @@ DbgTexture::~DbgTexture()
 bool DbgTexture::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
 {
     return instance.GetNativeHandle(nativeHandle, nativeHandleSize);
+}
+
+bool DbgTexture::SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize, bool own)
+{
+    if (!instance.SetNativeHandle(nativeHandle, nativeHandleSize, own))
+        return false;
+    hasNativeHandle = true;
+    return true;
 }
 
 void DbgTexture::SetDebugName(const char* name)

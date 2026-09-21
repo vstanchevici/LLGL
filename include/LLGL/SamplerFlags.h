@@ -134,11 +134,8 @@ enum class ChromaLocation
 \remarks A texture that is sampled with a Y'CbCr conversion must be created with the same conversion descriptor as the sampler.
 Such a texture must be bound to a combined texture-sampler whose sampler binding has BindFlags::SamplerYcbcrConversion.
 The conversion is performed by the hardware before the texel is returned to the shader, i.e. the shader receives RGB values.
-\remarks Use RenderSystem::QueryExternalImageProperties to query the conversion that is suggested by the driver for an external image.
-\remarks A conversion is only applied if its format is multi-planar (see IsMultiPlanarFormat) or its external format is non-zero.
-Otherwise, the conversion is ignored, so the descriptor returned by RenderSystem::QueryExternalImageProperties can always be passed through.
-\remarks With OpenGLES, the color model conversion of external images is performed implicitly by the driver and the conversion parameters are ignored.
-\note Only supported with: Vulkan, OpenGLES (external images only).
+\remarks A conversion is only applied if its format is multi-planar (see IsMultiPlanarFormat). Otherwise, the conversion is ignored.
+\note Only supported with: Vulkan.
 \see SamplerDescriptor::ycbcrConversion
 \see TextureDescriptor::ycbcrConversion
 \see RenderingFeatures::hasSamplerYcbcrConversion
@@ -147,18 +144,9 @@ struct YcbcrConversionDescriptor
 {
     /**
     \brief Multi-planar texture format, e.g. Format::NV12. By default Format::Undefined.
-    \remarks This must be Format::Undefined if \c externalFormat is non-zero.
     \see IsMultiPlanarFormat
     */
     Format              format                      = Format::Undefined;
-
-    /**
-    \brief Opaque driver-specific format of an external image. By default 0.
-    \remarks This is only used for external images whose format cannot be expressed with a Format entry.
-    The value is returned by RenderSystem::QueryExternalImageProperties and must be passed through unmodified.
-    \see ExternalImageProperties::ycbcrConversion
-    */
-    std::uint64_t       externalFormat              = 0;
 
     //! Color model conversion. By default YcbcrModel::Ycbcr709.
     YcbcrModel          model                       = YcbcrModel::Ycbcr709;
@@ -180,7 +168,6 @@ struct YcbcrConversionDescriptor
 
     /**
     \brief Component swizzle that is applied before the color model conversion. Each component is mapped to its identity by default.
-    \remarks For external images, this should be the value returned by RenderSystem::QueryExternalImageProperties.
     */
     TextureSwizzleRGBA  swizzle;
 
@@ -268,7 +255,7 @@ struct LLGL_EXPORT SamplerDescriptor
     all address modes are SamplerAddressMode::Clamp, MIP-mapping and anisotropy are disabled, compare operations are disabled,
     and the min/mag filters equal YcbcrConversionDescriptor::chromaFilter unless the format supports separate reconstruction filters.
     \remarks The pointer is only read during the call to RenderSystem::CreateSampler.
-    \note Only supported with: Vulkan, OpenGLES (external images only).
+    \note Only supported with: Vulkan.
     \see BindFlags::SamplerYcbcrConversion
     \see RenderingFeatures::hasSamplerYcbcrConversion
     */

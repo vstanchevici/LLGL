@@ -67,7 +67,6 @@ VKCommandBuffer::VKCommandBuffer(
                               VKPtr<VkFence>{ device, vkDestroyFence }      },
     numCommandBuffers_      { VKCommandBuffer::GetNumVkCommandBuffers(desc) },
     queuePresentFamily_     { queueFamilyIndices.presentFamily              },
-    queueGraphicsFamily_    { queueFamilyIndices.graphicsFamily             },
     maxDrawIndirectCount_   { GetMaxDrawIndirectCount(physicalDevice)       },
     descriptorSetPoolArray_ { device,
                               device,
@@ -105,11 +104,6 @@ VKCommandBuffer::VKCommandBuffer(
 VKCommandBuffer::~VKCommandBuffer()
 {
     vkFreeCommandBuffers(device_, commandPool_, numCommandBuffers_, commandBufferArray_);
-    for (VkCommandBuffer prologue : prologueBufferArray_)
-    {
-        if (prologue != VK_NULL_HANDLE)
-            vkFreeCommandBuffers(device_, commandPool_, 1, &prologue);
-    }
 }
 
 VkFence VKCommandBuffer::GetQueueSubmitFenceAndFlush()
@@ -122,19 +116,6 @@ VkFence VKCommandBuffer::GetQueueSubmitFenceAndFlush()
     recordingFence_ = VK_NULL_HANDLE;
     recordingFenceDirty_[commandBufferIndex_] = true;
     return fence;
-}
-
-VkResult VKCommandBuffer::SubmitToQueue(VkQueue queue)
-{
-    /* Submit prologue that acquires external textures in the same batch, so its barriers are ordered before the commands of this buffer */
-    VkCommandBuffer commandBuffers[2];
-    std::uint32_t numCommandBuffers = 0;
-
-    if (prologueRecorded_[commandBufferIndex_])
-        commandBuffers[numCommandBuffers++] = prologueBufferArray_[commandBufferIndex_];
-    commandBuffers[numCommandBuffers++] = commandBuffer_;
-
-    return VKSubmitCommandBuffers(queue, numCommandBuffers, commandBuffers, GetQueueSubmitFenceAndFlush());
 }
 
 /* ----- Encoding ----- */
@@ -185,16 +166,6 @@ void VKCommandBuffer::Begin()
 
 void VKCommandBuffer::End()
 {
-    /*
-    Transfer ownership of external textures back to their producer at the end of this command buffer and record the prologue to acquire them.
-    Secondary command buffers pass their external textures to the primary command buffer (see Execute).
-    */
-    if (!externalTextures_.empty() && !IsSecondaryCmdBuffer())
-    {
-        RecordExternalTextureReleaseBarriers();
-        RecordExternalTextureAcquirePrologue();
-    }
-
     /* End encoding of current command buffer */
     VkResult result = vkEndCommandBuffer(commandBuffer_);
     VKThrowIfFailed(result, "failed to end Vulkan command buffer");
@@ -205,7 +176,7 @@ void VKCommandBuffer::End()
     /* Execute command buffer right after encoding for immediate command buffers */
     if (IsImmediateCmdBuffer())
     {
-        VkResult result = SubmitToQueue(commandQueue_);
+        VkResult result = VKSubmitCommandBuffer(commandQueue_, commandBuffer_, GetQueueSubmitFenceAndFlush());
         VKThrowIfFailed(result, "failed to submit command buffer to Vulkan graphics queue");
     }
 
@@ -217,10 +188,6 @@ void VKCommandBuffer::Execute(CommandBuffer& secondaryCommandBuffer)
     auto& cmdBufferVK = LLGL_CAST(VKCommandBuffer&, secondaryCommandBuffer);
     VkCommandBuffer cmdBuffers[] = { cmdBufferVK.GetVkCommandBuffer() };
     vkCmdExecuteCommands(commandBuffer_, 1, cmdBuffers);
-
-    /* Ownership of external textures is transferred by the primary command buffer */
-    for (VKTexture* textureVK : cmdBufferVK.externalTextures_)
-        TrackExternalTexture(*textureVK);
 }
 
 /* ----- Blitting ----- */
@@ -484,8 +451,8 @@ void VKCommandBuffer::GenerateMips(Texture& texture)
 {
     auto& textureVK = LLGL_CAST(VKTexture&, texture);
 
-    /* Multi-planar and external images have no MIP-maps */
-    if (textureVK.IsMultiPlanar() || textureVK.IsExternal())
+    /* Multi-planar images and images with a Y'CbCr conversion (e.g. native images with an external format) have no MIP-maps */
+    if (textureVK.IsMultiPlanar() || textureVK.GetYcbcrConversion() != nullptr)
         return;
     context_.GenerateMips(
         textureVK.GetVkImage(),
@@ -499,8 +466,8 @@ void VKCommandBuffer::GenerateMips(Texture& texture, const TextureSubresource& s
 {
     auto& textureVK = LLGL_CAST(VKTexture&, texture);
 
-    /* Multi-planar and external images have no MIP-maps */
-    if (textureVK.IsMultiPlanar() || textureVK.IsExternal())
+    /* Multi-planar images and images with a Y'CbCr conversion (e.g. native images with an external format) have no MIP-maps */
+    if (textureVK.IsMultiPlanar() || textureVK.GetYcbcrConversion() != nullptr)
         return;
 
     const std::uint32_t maxNumMipLevels     = textureVK.GetNumMipLevels();
@@ -627,14 +594,6 @@ void VKCommandBuffer::SetIndexBuffer(Buffer& buffer, const Format format, std::u
 
 /* ----- Resources ----- */
 
-// Shader stages that can sample external textures
-static constexpr VkPipelineStageFlags g_externalTextureStageMask =
-(
-    VK_PIPELINE_STAGE_VERTEX_SHADER_BIT     |
-    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT   |
-    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
-);
-
 void VKCommandBuffer::SetResourceHeap(ResourceHeap& resourceHeap, std::uint32_t descriptorSet)
 {
     if (boundPipelineState_ == nullptr)
@@ -667,14 +626,6 @@ void VKCommandBuffer::SetResource(std::uint32_t descriptor, Resource& resource)
 
     if (!(descriptor < boundBindingTable_->dynamicBindings.size()))
         return /*Out of bounds*/;
-
-    /* Ownership of external textures is transferred implicitly when this command buffer is submitted */
-    if (resource.GetResourceType() == ResourceType::Texture)
-    {
-        VKTexture& textureVK = LLGL_CAST(VKTexture&, resource);
-        if (textureVK.IsExternal())
-            TrackExternalTexture(textureVK);
-    }
 
     /* Resources of PSOs with Y'CbCr variants are written once the variant is resolved; this may also switch the binding table */
     bool writeDescriptor = true;
@@ -1701,132 +1652,6 @@ void VKCommandBuffer::ResetYcbcrBindingStates()
     ycbcrPendingUniformData_.clear();
 }
 
-void VKCommandBuffer::TrackExternalTexture(VKTexture& textureVK)
-{
-    if (std::find(externalTextures_.begin(), externalTextures_.end(), &textureVK) == externalTextures_.end())
-        externalTextures_.push_back(&textureVK);
-}
-
-// Initializes an image barrier for a queue family ownership transfer of the specified external texture.
-static void InitExternalTextureBarrier(
-    VkImageMemoryBarrier&   barrier,
-    VKTexture&              textureVK,
-    VkAccessFlags           srcAccessMask,
-    VkAccessFlags           dstAccessMask,
-    VkImageLayout           oldLayout,
-    VkImageLayout           newLayout,
-    std::uint32_t           srcQueueFamilyIndex,
-    std::uint32_t           dstQueueFamilyIndex)
-{
-    barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.pNext                           = nullptr;
-    barrier.srcAccessMask                   = srcAccessMask;
-    barrier.dstAccessMask                   = dstAccessMask;
-    barrier.oldLayout                       = oldLayout;
-    barrier.newLayout                       = newLayout;
-    barrier.srcQueueFamilyIndex             = srcQueueFamilyIndex;
-    barrier.dstQueueFamilyIndex             = dstQueueFamilyIndex;
-    barrier.image                           = textureVK.GetVkImage();
-    barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.baseMipLevel   = 0;
-    barrier.subresourceRange.levelCount     = 1;
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount     = 1;
-}
-
-void VKCommandBuffer::RecordExternalTextureReleaseBarriers()
-{
-    /* Release ownership to the external producer; this is always recorded outside of a render pass, since End() is called after EndRenderPass() */
-    SmallVector<VkImageMemoryBarrier, 4> barriers;
-    barriers.resize(externalTextures_.size());
-
-    for_range(i, externalTextures_.size())
-    {
-        InitExternalTextureBarrier(
-            barriers[i],
-            *externalTextures_[i],
-            VK_ACCESS_SHADER_READ_BIT,
-            0, // Ignored for release operations
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_IMAGE_LAYOUT_GENERAL,
-            queueGraphicsFamily_,
-            GetExternalQueueFamilyIndex()
-        );
-    }
-
-    vkCmdPipelineBarrier(
-        commandBuffer_,
-        g_externalTextureStageMask,
-        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-        0,
-        0, nullptr,
-        0, nullptr,
-        static_cast<std::uint32_t>(barriers.size()), barriers.data()
-    );
-}
-
-void VKCommandBuffer::RecordExternalTextureAcquirePrologue()
-{
-    /* Allocate prologue command buffer on demand; it shares the recording fence with the native command buffer of the same index */
-    VkCommandBuffer& prologue = prologueBufferArray_[commandBufferIndex_];
-    if (prologue == VK_NULL_HANDLE)
-    {
-        VkCommandBufferAllocateInfo allocInfo;
-        {
-            allocInfo.sType                 = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-            allocInfo.pNext                 = nullptr;
-            allocInfo.commandPool           = commandPool_;
-            allocInfo.level                 = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-            allocInfo.commandBufferCount    = 1;
-        }
-        VkResult result = vkAllocateCommandBuffers(device_, &allocInfo, &prologue);
-        VKThrowIfFailed(result, "failed to allocate Vulkan command buffer for external texture prologue");
-    }
-
-    VkCommandBufferBeginInfo beginInfo;
-    {
-        beginInfo.sType             = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        beginInfo.pNext             = nullptr;
-        beginInfo.flags             = (usageFlags_ & VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
-        beginInfo.pInheritanceInfo  = nullptr;
-    }
-    VkResult result = vkBeginCommandBuffer(prologue, &beginInfo);
-    VKThrowIfFailed(result, "failed to begin Vulkan command buffer for external texture prologue");
-
-    /* Acquire ownership from the external producer; the old layout must not be UNDEFINED, since that would allow the implementation to discard the content */
-    SmallVector<VkImageMemoryBarrier, 4> barriers;
-    barriers.resize(externalTextures_.size());
-
-    for_range(i, externalTextures_.size())
-    {
-        InitExternalTextureBarrier(
-            barriers[i],
-            *externalTextures_[i],
-            0, // Ignored for acquire operations
-            VK_ACCESS_SHADER_READ_BIT,
-            VK_IMAGE_LAYOUT_GENERAL,
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            GetExternalQueueFamilyIndex(),
-            queueGraphicsFamily_
-        );
-    }
-
-    vkCmdPipelineBarrier(
-        prologue,
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-        g_externalTextureStageMask,
-        0,
-        0, nullptr,
-        0, nullptr,
-        static_cast<std::uint32_t>(barriers.size()), barriers.data()
-    );
-
-    result = vkEndCommandBuffer(prologue);
-    VKThrowIfFailed(result, "failed to end Vulkan command buffer for external texture prologue");
-
-    prologueRecorded_[commandBufferIndex_] = true;
-}
-
 void VKCommandBuffer::AcquireNextBuffer()
 {
     /* Move to next command buffer index */
@@ -1848,19 +1673,6 @@ void VKCommandBuffer::AcquireNextBuffer()
     context_.Reset(commandBuffer_);
 
     stagingBufferPools_[commandBufferIndex_].Reset();
-
-    /* Prologue of this native command buffer is recorded again if external textures are bound */
-    prologueRecorded_[commandBufferIndex_] = false;
-    externalTextures_.clear();
-}
-
-std::uint32_t VKCommandBuffer::GetExternalQueueFamilyIndex() const
-{
-    #if VK_EXT_queue_family_foreign
-    if (HasExtension(VKExt::EXT_queue_family_foreign))
-        return VK_QUEUE_FAMILY_FOREIGN_EXT;
-    #endif
-    return VK_QUEUE_FAMILY_EXTERNAL;
 }
 
 void VKCommandBuffer::ResetBindingStates()

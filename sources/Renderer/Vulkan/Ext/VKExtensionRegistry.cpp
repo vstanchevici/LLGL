@@ -61,18 +61,6 @@ static const char* g_VKOptionalExtensions[] =
     #if VK_KHR_get_memory_requirements2
     VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
     #endif
-    #if VK_KHR_external_memory
-    VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
-    #endif
-    #if VK_KHR_dedicated_allocation
-    VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME,
-    #endif
-    #if VK_EXT_queue_family_foreign
-    VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME,
-    #endif
-    #if VK_ANDROID_external_memory_android_hardware_buffer
-    VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME,
-    #endif
     nullptr,
 };
 
@@ -121,9 +109,6 @@ static bool IsVulkanInstanceExtOptional(const StringView& name)
         #endif
         #if VK_KHR_portability_enumeration
         || name == VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
-        #endif
-        #if VK_KHR_external_memory_capabilities
-        || name == VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME
         #endif
     );
 }

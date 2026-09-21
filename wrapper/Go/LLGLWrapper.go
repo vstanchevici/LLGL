@@ -804,12 +804,6 @@ const (
     TextureSwizzleAlpha
 )
 
-type ExternalImageType int
-const (
-    ExternalImageTypeUndefined ExternalImageType = iota
-    ExternalImageTypeAndroidHardwareBuffer
-)
-
 
 /* ----- Flags ----- */
 
@@ -1186,7 +1180,6 @@ type RenderingFeatures struct {
     HasPipelineStatistics        bool /* = false */
     HasRenderCondition           bool /* = false */
     HasSamplerYcbcrConversion    bool /* = false */
-    HasExternalImageAndroid      bool /* = false */
 }
 
 type RenderingLimits struct {
@@ -1447,11 +1440,6 @@ type SwapChainDescriptor struct {
     Resizable   bool     /* = false */
 }
 
-type ExternalImageDescriptor struct {
-    Type   ExternalImageType /* = ExternalImageTypeUndefined */
-    Handle unsafe.Pointer    /* = nil */
-}
-
 type TextureSwizzleRGBA struct {
     R TextureSwizzle /* = TextureSwizzleRed */
     G TextureSwizzle /* = TextureSwizzleGreen */
@@ -1540,7 +1528,6 @@ type RenderTargetDescriptor struct {
 
 type YcbcrConversionDescriptor struct {
     Format                      Format             /* = FormatUndefined */
-    ExternalFormat              uint64             /* = 0 */
     Model                       YcbcrModel         /* = YcbcrModelYcbcr709 */
     Range                       YcbcrRange         /* = YcbcrRangeNarrow */
     XChromaOffset               ChromaLocation     /* = ChromaLocationMidpoint */
@@ -1608,14 +1595,6 @@ type MeshPipelineDescriptor struct {
     Blend               BlendDescriptor
 }
 
-type ExternalImageProperties struct {
-    Extent                     Extent3D
-    Format                     Format                    /* = FormatUndefined */
-    YcbcrConversion            YcbcrConversionDescriptor
-    RequiresYcbcr              bool                      /* = false */
-    SupportsLinearChromaFilter bool                      /* = false */
-}
-
 type ResourceViewDescriptor struct {
     Resource     *Resource             /* = nil */
     TextureView  TextureViewDescriptor
@@ -1677,7 +1656,6 @@ type TextureDescriptor struct {
     MipLevels       uint32                     /* = 0 */
     Samples         uint32                     /* = 1 */
     ClearValue      ClearValue
-    External        *ExternalImageDescriptor   /* = nil */
     YcbcrConversion *YcbcrConversionDescriptor /* = nil */
 }
 

@@ -426,19 +426,6 @@ class LLGL_EXPORT RenderSystem : public Interface
         */
         virtual void ReadTexture(Texture& texture, const TextureRegion& textureRegion, const MutableImageView& dstImageView) = 0;
 
-        /**
-        \brief Queries the properties of the specified external image.
-        \param[in] externalImageDesc Specifies the external image whose properties are to be queried.
-        \param[out] outProperties Specifies the output properties. This is only written to if the return value is true.
-        \return True if the external image is supported by this render system and its properties could be queried. Otherwise, the return value is false.
-        \remarks Use the returned Y'CbCr conversion to create the sampler and texture for the external image.
-        \note Only supported with: Vulkan, OpenGLES.
-        \see ExternalImageDescriptor
-        \see TextureDescriptor::external
-        \see RenderingFeatures::hasExternalImageAndroid
-        */
-        virtual bool QueryExternalImageProperties(const ExternalImageDescriptor& externalImageDesc, ExternalImageProperties& outProperties);
-
         /* ----- Samplers ---- */
 
         /**

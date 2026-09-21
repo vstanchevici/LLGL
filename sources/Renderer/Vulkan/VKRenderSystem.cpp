@@ -31,10 +31,6 @@
 #include <LLGL/Log.h>
 #include <limits>
 
-#if VK_ANDROID_external_memory_android_hardware_buffer
-#   include "Platform/Android/VKAndroidHardwareBuffer.h"
-#endif
-
 #include <LLGL/Backend/Vulkan/NativeHandle.h>
 
 
@@ -107,9 +103,11 @@ VKRenderSystem::VKRenderSystem(const RenderSystemDescriptor& renderSystemDesc) :
         (rendererConfigVK != nullptr ? rendererConfigVK->reduceDeviceMemoryFragmentation : false)
     );
 
-    /* Create pool for sampler Y'CbCr conversions if the device supports them */
-    if (HasExtension(VKExt::KHR_sampler_ycbcr_conversion))
-        ycbcrConversionPool_ = MakeUnique<VKYcbcrConversionPool>(device_, physicalDevice_.GetVkPhysicalDevice());
+    /*
+    Create pool for sampler Y'CbCr conversions. It is always available, since client-created conversions can be wrapped (see Resource::SetNativeHandle),
+    but LLGL only creates conversions itself if the device supports them (see RenderingFeatures::hasSamplerYcbcrConversion).
+    */
+    ycbcrConversionPool_ = MakeUnique<VKYcbcrConversionPool>(device_, physicalDevice_.GetVkPhysicalDevice());
 }
 
 VKRenderSystem::~VKRenderSystem()
@@ -333,9 +331,7 @@ static VkImageLayout FindOptimalInitialVkImageLayout(Format format, long bindFla
 
 Texture* VKRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, const ImageView* initialImage)
 {
-    /* External and multi-planar textures have their own initialization */
-    if (textureDesc.external != nullptr)
-        return CreateExternalTexture(textureDesc);
+    /* Multi-planar textures have their own initialization */
     if (IsMultiPlanarFormat(textureDesc.format))
         return CreateMultiPlanarTexture(textureDesc, initialImage);
 
@@ -523,12 +519,6 @@ void VKRenderSystem::WriteTexture(Texture& texture, const TextureRegion& texture
 {
     auto& textureVK = LLGL_CAST(VKTexture&, texture);
 
-    if (textureVK.IsExternal())
-    {
-        Log::Errorf("cannot write to external Vulkan texture\n");
-        return;
-    }
-
     if (textureVK.IsMultiPlanar())
     {
         WriteMultiPlanarTexture(textureVK, textureRegion, srcImageView);
@@ -617,9 +607,9 @@ void VKRenderSystem::ReadTexture(Texture& texture, const TextureRegion& textureR
 {
     auto& textureVK = LLGL_CAST(VKTexture&, texture);
 
-    if (textureVK.IsExternal() || textureVK.IsMultiPlanar())
+    if (textureVK.IsMultiPlanar())
     {
-        Log::Errorf("cannot read from external or multi-planar Vulkan texture\n");
+        Log::Errorf("cannot read from multi-planar Vulkan texture\n");
         return;
     }
 
@@ -855,33 +845,6 @@ void VKRenderSystem::Release(Fence& fence)
 }
 
 /* ----- Extensions ----- */
-
-bool VKRenderSystem::QueryExternalImageProperties(const ExternalImageDescriptor& externalImageDesc, ExternalImageProperties& outProperties)
-{
-    #if VK_ANDROID_external_memory_android_hardware_buffer
-
-    if (externalImageDesc.type == ExternalImageType::AndroidHardwareBuffer && HasExtension(VKExt::ANDROID_external_memory_android_hardware_buffer))
-    {
-        VKAndroidHardwareBufferProperties props;
-        if (VKQueryAndroidHardwareBufferProperties(device_, static_cast<AHardwareBuffer*>(externalImageDesc.handle), props))
-        {
-            /* Remember format features of external format, so Y'CbCr conversions can apply fallbacks for unsupported features */
-            if (ycbcrConversionPool_)
-                ycbcrConversionPool_->RegisterExternalFormatFeatures(props.externalFormat, props.formatFeatures);
-            VKConvertAndroidHardwareBufferProperties(props, outProperties);
-            return true;
-        }
-    }
-
-    #else
-
-    (void)externalImageDesc;
-    (void)outProperties;
-
-    #endif // /VK_ANDROID_external_memory_android_hardware_buffer
-
-    return false;
-}
 
 bool VKRenderSystem::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
 {
@@ -1219,14 +1182,6 @@ VkCommandBuffer VKRenderSystem::AllocCommandBuffer(bool begin)
 void VKRenderSystem::FlushCommandBuffer(VkCommandBuffer commandBuffer)
 {
     device_.FlushCommandBuffer(commandBuffer);
-}
-
-Texture* VKRenderSystem::CreateExternalTexture(const TextureDescriptor& textureDesc)
-{
-    /* Import external image; its ownership and layout are transferred implicitly by each command buffer that binds it (see VKCommandBuffer::TrackExternalTexture) */
-    VKTexture* textureVK = textures_.emplace<VKTexture>(device_, *deviceMemoryMngr_, textureDesc, ycbcrConversionPool_.get());
-    textureVK->CreateInternalImageView(device_);
-    return textureVK;
 }
 
 Texture* VKRenderSystem::CreateMultiPlanarTexture(const TextureDescriptor& textureDesc, const ImageView* initialImage)

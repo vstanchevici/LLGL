@@ -19,8 +19,9 @@ namespace LLGL
 
 
 VKSampler::VKSampler(VkDevice device, const SamplerDescriptor& desc, VKYcbcrConversionPool* ycbcrConversionPool) :
-    device_  { device                    },
-    sampler_ { device, vkDestroySampler  }
+    device_              { device                   },
+    ycbcrConversionPool_ { ycbcrConversionPool      },
+    sampler_             { device, vkDestroySampler }
 {
     if (desc.ycbcrConversion != nullptr && IsYcbcrConversionRequired(*desc.ycbcrConversion))
     {
@@ -43,11 +44,43 @@ bool VKSampler::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize
 {
     if (auto* nativeHandleVK = GetTypedNativeHandle<Vulkan::ResourceNativeHandle>(nativeHandle, nativeHandleSize))
     {
-        nativeHandleVK->type            = Vulkan::ResourceNativeType::Sampler;
-        nativeHandleVK->sampler.sampler = GetVkSampler();
+        nativeHandleVK->type                    = Vulkan::ResourceNativeType::Sampler;
+        nativeHandleVK->sampler.sampler         = GetVkSampler();
+        nativeHandleVK->sampler.ycbcrConversion = (ycbcrConversion_ ? ycbcrConversion_->GetVkSamplerYcbcrConversion() : VK_NULL_HANDLE);
         return true;
     }
     return false;
+}
+
+bool VKSampler::SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize, bool own)
+{
+    auto* nativeHandleVK = GetTypedNativeHandle<Vulkan::ResourceNativeHandle>(nativeHandle, nativeHandleSize);
+    if (nativeHandleVK == nullptr || nativeHandleVK->type != Vulkan::ResourceNativeType::Sampler || nativeHandleVK->sampler.sampler == VK_NULL_HANDLE)
+        return false;
+
+    const Vulkan::ResourceNativeHandle::NativeSampler& nativeSampler = nativeHandleVK->sampler;
+
+    if (nativeSampler.ycbcrConversion != VK_NULL_HANDLE)
+    {
+        /* Samplers with Y'CbCr conversion are shared with the textures that reference the same conversion (see VKTexture::SetNativeHandle) */
+        if (ycbcrConversionPool_ == nullptr)
+            return false;
+        ycbcrConversion_ = ycbcrConversionPool_->AcquireNative(nativeSampler.ycbcrConversion, nativeSampler.sampler, VK_FORMAT_UNDEFINED, own);
+        sampler_.Release();
+    }
+    else
+    {
+        ycbcrConversion_.reset();
+        if (own)
+        {
+            sampler_ = VKPtr<VkSampler>{ device_, vkDestroySampler };
+            sampler_ = nativeSampler.sampler;
+        }
+        else
+            sampler_ = VKPtr<VkSampler>{ nativeSampler.sampler }; // Weak reference without deleter
+    }
+
+    return true;
 }
 
 static VkFilter GetVkFilter(const SamplerFilter filter)

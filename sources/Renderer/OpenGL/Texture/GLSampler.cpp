@@ -30,8 +30,28 @@ GLSampler::GLSampler(const char* debugName)
 
 GLSampler::~GLSampler()
 {
-    glDeleteSamplers(1, &id_);
+    if (ownsObject_)
+    {
+        glDeleteSamplers(1, &id_);
+        GLStateManager::Get().NotifySamplerRelease(id_);
+    }
+}
+
+bool GLSampler::SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize, bool own)
+{
+    auto* nativeHandleGL = GetTypedNativeHandle<OpenGL::ResourceNativeHandle>(nativeHandle, nativeHandleSize);
+    if (nativeHandleGL == nullptr || nativeHandleGL->type != OpenGL::ResourceNativeType::Sampler || nativeHandleGL->id == 0)
+        return false;
+
+    /* Release previous sampler object if it was owned by this object */
+    if (ownsObject_)
+        glDeleteSamplers(1, &id_);
     GLStateManager::Get().NotifySamplerRelease(id_);
+
+    /* Take over native sampler object; it is deleted with this object only if owned */
+    id_         = nativeHandleGL->id;
+    ownsObject_ = own;
+    return true;
 }
 
 bool GLSampler::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
@@ -96,6 +116,11 @@ GLSampler::GLSampler(const char* debugName)
 GLSampler::~GLSampler()
 {
     // dummy
+}
+
+bool GLSampler::SetNativeHandle(void* /*nativeHandle*/, std::size_t /*nativeHandleSize*/, bool /*own*/)
+{
+    return false; // dummy
 }
 
 bool GLSampler::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)

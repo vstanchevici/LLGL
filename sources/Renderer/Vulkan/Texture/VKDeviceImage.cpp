@@ -40,6 +40,17 @@ VKDeviceImage& VKDeviceImage::operator = (VKDeviceImage&& rhs)
     return *this;
 }
 
+void VKDeviceImage::SetVkImage(VkDevice device, VkImage image, bool own)
+{
+    if (own)
+    {
+        image_ = VKPtr<VkImage>{ device, vkDestroyImage };
+        image_ = image;
+    }
+    else
+        image_ = VKPtr<VkImage>{ image }; // Weak reference without deleter
+}
+
 void VKDeviceImage::AllocateMemoryRegion(VKDeviceMemoryManager& deviceMemoryMngr)
 {
     VkDevice device = deviceMemoryMngr.GetVkDevice();
@@ -91,14 +102,13 @@ void VKDeviceImage::CreateVkImage(
     std::uint32_t           numArrayLayers,
     VkImageCreateFlags      createFlags,
     VkSampleCountFlagBits   sampleCountBits,
-    VkImageUsageFlags       usageFlags,
-    const void*             pNext)
+    VkImageUsageFlags       usageFlags)
 {
     /* Create image object */
     VkImageCreateInfo createInfo;
     {
         createInfo.sType                    = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        createInfo.pNext                    = pNext;
+        createInfo.pNext                    = nullptr;
         createInfo.flags                    = createFlags;
         createInfo.imageType                = imageType;
         createInfo.format                   = format;

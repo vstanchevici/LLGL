@@ -30,6 +30,8 @@ class VKSampler final : public Sampler
 
         void SetDebugName(const char* name) override;
 
+        bool SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize, bool own = false) override;
+
     public:
 
         // Creates a sampler. If SamplerDescriptor::ycbcrConversion is non-null, the conversion is acquired from the specified pool.
@@ -58,6 +60,7 @@ class VKSampler final : public Sampler
     private:
 
         VkDevice                device_             = VK_NULL_HANDLE;
+        VKYcbcrConversionPool*  ycbcrConversionPool_ = nullptr;
         VKYcbcrConversionSPtr   ycbcrConversion_;
         VKPtr<VkSampler>        sampler_;           // Null for samplers with Y'CbCr conversion
 

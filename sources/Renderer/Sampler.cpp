@@ -22,7 +22,6 @@ LLGL_EXPORT bool operator == (const YcbcrConversionDescriptor& lhs, const YcbcrC
     return
     (
         lhs.format                      == rhs.format                       &&
-        lhs.externalFormat              == rhs.externalFormat               &&
         lhs.model                       == rhs.model                        &&
         lhs.range                       == rhs.range                        &&
         lhs.xChromaOffset               == rhs.xChromaOffset                &&

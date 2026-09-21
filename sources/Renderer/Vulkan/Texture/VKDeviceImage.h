@@ -55,8 +55,7 @@ class VKDeviceImage
             std::uint32_t           numArrayLayers,
             VkImageCreateFlags      createFlags,
             VkSampleCountFlagBits   sampleCountBits,
-            VkImageUsageFlags       usageFlags,
-            const void*             pNext               = nullptr
+            VkImageUsageFlags       usageFlags
         );
 
         void ReleaseVkImage();
@@ -84,12 +83,12 @@ class VKDeviceImage
             return image_;
         }
 
-        // Set the native VkImage handle.
-        inline void SetVkImage(VkImage image)
-        {
-            //ReleaseVkImage();
-            image_ = image;
-        }
+        /*
+        Replaces the native VkImage handle and destroys the previous image if it was owned.
+        If 'own' is true, the new image is destroyed together with this object. Otherwise, it is only referenced.
+        The memory region of the previous image must be released by the caller.
+        */
+        void SetVkImage(VkDevice device, VkImage image, bool own);
 
         // Returns the native VkImageLayout state of this image.
         inline VkImageLayout GetVkImageLayout() const

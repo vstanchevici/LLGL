@@ -60,8 +60,6 @@ class VKRenderSystem final : public RenderSystem
         VKRenderSystem(const RenderSystemDescriptor& renderSystemDesc);
         ~VKRenderSystem();
 
-        bool QueryExternalImageProperties(const ExternalImageDescriptor& externalImageDesc, ExternalImageProperties& outProperties) override;
-
     public:
 
         inline bool IsBreakOnErrorEnabled() const
@@ -107,7 +105,6 @@ class VKRenderSystem final : public RenderSystem
         VkCommandBuffer AllocCommandBuffer(bool begin = true);
         void FlushCommandBuffer(VkCommandBuffer commandBuffer);
 
-        Texture* CreateExternalTexture(const TextureDescriptor& textureDesc);
         Texture* CreateMultiPlanarTexture(const TextureDescriptor& textureDesc, const ImageView* initialImage);
         void WriteMultiPlanarTexture(VKTexture& textureVK, const TextureRegion& textureRegion, const ImageView& srcImageView);
 

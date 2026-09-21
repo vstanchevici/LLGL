@@ -219,11 +219,6 @@ const Report* RenderSystem::GetReport() const
     return (pimpl_->report ? &(pimpl_->report) : nullptr);
 }
 
-bool RenderSystem::QueryExternalImageProperties(const ExternalImageDescriptor& /*externalImageDesc*/, ExternalImageProperties& /*outProperties*/)
-{
-    return false; // External images are not supported by default
-}
-
 
 /*
  * ======= Protected: =======

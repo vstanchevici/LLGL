@@ -847,13 +847,6 @@ typedef enum LLGLTextureSwizzle
 }
 LLGLTextureSwizzle;
 
-typedef enum LLGLExternalImageType
-{
-    LLGLExternalImageTypeUndefined,
-    LLGLExternalImageTypeAndroidHardwareBuffer,
-}
-LLGLExternalImageType;
-
 
 /* ----- Flags ----- */
 
@@ -1287,7 +1280,6 @@ typedef struct LLGLRenderingFeatures
     bool hasPipelineStatistics;        /* = false */
     bool hasRenderCondition;           /* = false */
     bool hasSamplerYcbcrConversion;    /* = false */
-    bool hasExternalImageAndroid;      /* = false */
 }
 LLGLRenderingFeatures;
 
@@ -1453,11 +1445,11 @@ LLGLImageView;
 typedef struct LLGLBindingDescriptor
 {
     const char*      name;
-    LLGLResourceType type;             /* = LLGLResourceTypeUndefined */
-    long             bindFlags;        /* = 0 */
-    long             stageFlags;       /* = 0 */
+    LLGLResourceType type;       /* = LLGLResourceTypeUndefined */
+    long             bindFlags;  /* = 0 */
+    long             stageFlags; /* = 0 */
     LLGLBindingSlot  slot;
-    uint32_t         arraySize;        /* = 0 */
+    uint32_t         arraySize;  /* = 0 */
 }
 LLGLBindingDescriptor;
 
@@ -1619,13 +1611,6 @@ typedef struct LLGLSwapChainDescriptor
 }
 LLGLSwapChainDescriptor;
 
-typedef struct LLGLExternalImageDescriptor
-{
-    LLGLExternalImageType type;   /* = LLGLExternalImageTypeUndefined */
-    void*                 handle; /* = NULL */
-}
-LLGLExternalImageDescriptor;
-
 typedef struct LLGLTextureSwizzleRGBA
 {
     LLGLTextureSwizzle r : 8; /* = LLGLTextureSwizzleRed */
@@ -1736,7 +1721,6 @@ LLGLRenderTargetDescriptor;
 typedef struct LLGLYcbcrConversionDescriptor
 {
     LLGLFormat             format;                      /* = LLGLFormatUndefined */
-    uint64_t               externalFormat;              /* = 0 */
     LLGLYcbcrModel         model;                       /* = LLGLYcbcrModelYcbcr709 */
     LLGLYcbcrRange         range;                       /* = LLGLYcbcrRangeNarrow */
     LLGLChromaLocation     xChromaOffset;               /* = LLGLChromaLocationMidpoint */
@@ -1824,16 +1808,6 @@ typedef struct LLGLMeshPipelineDescriptor
 }
 LLGLMeshPipelineDescriptor;
 
-typedef struct LLGLExternalImageProperties
-{
-    LLGLExtent3D                  extent;
-    LLGLFormat                    format;                     /* = LLGLFormatUndefined */
-    LLGLYcbcrConversionDescriptor ycbcrConversion;
-    bool                          requiresYcbcr;              /* = false */
-    bool                          supportsLinearChromaFilter; /* = false */
-}
-LLGLExternalImageProperties;
-
 typedef struct LLGLResourceViewDescriptor
 {
     LLGLResource              resource;     /* = LLGL_NULL_OBJECT */
@@ -1906,7 +1880,6 @@ typedef struct LLGLTextureDescriptor
     uint32_t                             mipLevels;       /* = 0 */
     uint32_t                             samples;         /* = 1 */
     LLGLClearValue                       clearValue;
-    const LLGLExternalImageDescriptor*   external;        /* = NULL */
     const LLGLYcbcrConversionDescriptor* ycbcrConversion; /* = NULL */
 }
 LLGLTextureDescriptor;

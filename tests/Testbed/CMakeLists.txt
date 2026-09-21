@@ -44,6 +44,15 @@ source_group("Testbed\\UnitTests"   FILES ${FilesTestbedUnitTests})
 
 include_directories("${TEST_PROJECTS_DIR}/Testbed")
 
+# <vulkan/vulkan.h> is needed for tests that set Vulkan native handles (e.g. YcbcrTexture), independent of the library type
+if(LLGL_BUILD_RENDERER_VULKAN)
+    find_package(Vulkan)
+    if(Vulkan_FOUND)
+        include_directories(${Vulkan_INCLUDE_DIR})
+        ADD_DEFINE(LLGL_TESTBED_VULKAN_HEADERS)
+    endif()
+endif()
+
 # These include directories are needed for the NativeHandle test: <vulkan/vulkan.h>, <GL/wglext.h>
 if(LLGL_BUILD_STATIC_LIB)
     if (LLGL_BUILD_RENDERER_VULKAN)

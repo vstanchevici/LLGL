@@ -209,7 +209,7 @@ static const GLenum g_textureTargetsEnum[] =
     0, // GL_TEXTURE_2D_MULTISAMPLE
     0, // GL_TEXTURE_2D_MULTISAMPLE_ARRAY
     #endif
-    #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
+    #if LLGL_GLEXT_TEXTURE_EXTERNAL_OES
     GL_TEXTURE_EXTERNAL_OES,
     #else
     0, // GL_TEXTURE_EXTERNAL_OES

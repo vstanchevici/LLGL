@@ -932,7 +932,7 @@ void GLResourceHeap::WriteResourceViewTexture(const ResourceViewDescriptor& desc
     /* Get texture resource and its size parameter */
     auto* textureGL = LLGL_CAST(GLTexture*, GetAsExpectedTexture(desc.resource, BindFlags::Sampled));
 
-    if (IsTextureViewEnabled(desc.textureView) && !textureGL->IsExternal()) // External textures cannot have texture views
+    if (IsTextureViewEnabled(desc.textureView) && textureGL->GetGLTextureTarget() != GLTextureTarget::TextureExternalOES) // External textures cannot have texture views
     {
         /* Allocate new texture view */
         AllocTextureView(GLRESOURCEHEAP_DATA2(heapPtr, GLuint)[index], textureGL->GetID(), desc.textureView);

@@ -135,6 +135,15 @@ struct ResourceNativeHandle
         So LLGL stores it at texture creation time.
         */
         GLint samples;
+
+        /**
+        \brief Specifies the texture target, e.g. \c GL_TEXTURE_2D or \c GL_TEXTURE_EXTERNAL_OES.
+        \remarks This is written by GetNativeHandle. For Resource::SetNativeHandle, this can be 0 to use the target of the texture type
+        the texture was created with. \c GL_TEXTURE_EXTERNAL_OES is only supported with OpenGLES on Android,
+        e.g. for an image that was imported with \c glEGLImageTargetTexture2DOES.
+        Such a texture must be declared as \c samplerExternalOES in GLSL, which requires the \c GL_OES_EGL_image_external_essl3 extension.
+        */
+        GLenum target;
     };
 
     /**

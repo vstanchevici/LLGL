@@ -13,7 +13,6 @@
 #include <LLGL/SamplerFlags.h>
 #include <memory>
 #include <vector>
-#include <map>
 #include <cstdint>
 
 
@@ -30,9 +29,21 @@ class VKYcbcrConversion
         VKYcbcrConversion(
             VkDevice                            device,
             const YcbcrConversionDescriptor&    desc,
-            VkFormatFeatureFlags                formatFeatures,
-            bool                                hasKnownFormatFeatures
+            VkFormatFeatureFlags                formatFeatures
         );
+
+        /*
+        Wraps a native conversion and a sampler that was created with it by the client (see Resource::SetNativeHandle).
+        The native objects are only destroyed together with this object if 'own' is true.
+        */
+        VKYcbcrConversion(
+            VkDevice                            device,
+            VkSamplerYcbcrConversion            nativeConversion,
+            VkSampler                           nativeSampler,
+            VkFormat                            format,
+            bool                                own
+        );
+
         ~VKYcbcrConversion();
 
         VKYcbcrConversion(const VKYcbcrConversion&) = delete;
@@ -50,7 +61,7 @@ class VKYcbcrConversion
             return desc_;
         }
 
-        // Returns the native format of this conversion. This is VK_FORMAT_UNDEFINED for external formats.
+        // Returns the native multi-planar format of this conversion.
         inline VkFormat GetVkFormat() const
         {
             return format_;
@@ -83,6 +94,18 @@ class VKYcbcrConversion
             return &canonicalSampler_;
         }
 
+        // Returns true if this conversion wraps native objects that were created by the client.
+        inline bool IsNative() const
+        {
+            return isNative_;
+        }
+
+        // Takes ownership of the native objects of this conversion, i.e. they will be destroyed together with this object.
+        inline void TakeOwnership()
+        {
+            ownsNativeObjects_ = true;
+        }
+
     private:
 
         void CreateCanonicalSampler(bool supportsLinearFilter);
@@ -96,16 +119,17 @@ class VKYcbcrConversion
         VkFormat                    format_                             = VK_FORMAT_UNDEFINED;
         VkFilter                    chromaFilter_                       = VK_FILTER_NEAREST;
         bool                        hasSeparateReconstructionFilter_    = false;
+        bool                        isNative_                           = false;
+        bool                        ownsNativeObjects_                  = true;
 
 };
 
 using VKYcbcrConversionSPtr = std::shared_ptr<VKYcbcrConversion>;
 
-// Returns true if the specified descriptor requires a native Y'CbCr conversion, i.e. it has a multi-planar or external format.
-// Descriptors for single-planar formats (e.g. of RGBA external images) are ignored, so they can be passed through by the client.
+// Returns true if the specified descriptor requires a native Y'CbCr conversion, i.e. it has a multi-planar format.
 inline bool IsYcbcrConversionRequired(const YcbcrConversionDescriptor& desc)
 {
-    return (desc.externalFormat != 0 || IsMultiPlanarFormat(desc.format));
+    return IsMultiPlanarFormat(desc.format);
 }
 
 // Pool of sampler Y'CbCr conversions. Samplers and textures with an identical conversion descriptor share the same native object.
@@ -119,18 +143,22 @@ class VKYcbcrConversionPool
         // Returns a shared conversion for the specified descriptor. The native object is destroyed when the last reference is released.
         VKYcbcrConversionSPtr Acquire(const YcbcrConversionDescriptor& desc);
 
-        // Stores the format features of an external format, e.g. from VkAndroidHardwareBufferFormatPropertiesANDROID::formatFeatures.
-        void RegisterExternalFormatFeatures(std::uint64_t externalFormat, VkFormatFeatureFlags formatFeatures);
+        /*
+        Returns a shared wrapper for the specified native conversion and sampler that were created by the client.
+        Textures with the same native handles share the same wrapper and thus the same pipeline variants.
+        If 'own' is true, the native objects are destroyed when the last reference is released.
+        */
+        VKYcbcrConversionSPtr AcquireNative(VkSamplerYcbcrConversion nativeConversion, VkSampler nativeSampler, VkFormat format, bool own);
 
-        // Returns the format features for the specified conversion descriptor. Returns false if they are unknown.
-        bool GetFormatFeatures(const YcbcrConversionDescriptor& desc, VkFormatFeatureFlags& outFormatFeatures) const;
+    private:
+
+        void RemoveExpiredEntries();
 
     private:
 
         VkDevice                                        device_             = VK_NULL_HANDLE;
         VkPhysicalDevice                                physicalDevice_     = VK_NULL_HANDLE;
         std::vector<std::weak_ptr<VKYcbcrConversion>>   conversions_;
-        std::map<std::uint64_t, VkFormatFeatureFlags>   externalFormatFeatures_;
 
 };
 

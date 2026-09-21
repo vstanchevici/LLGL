@@ -24,11 +24,10 @@
 #include "../../../Core/CoreUtils.h"
 #include <LLGL/Format.h>
 #include <LLGL/Utils/ForRange.h>
+#include <LLGL/Utils/TypeNames.h>
+#include <LLGL/Log.h>
+#include <algorithm>
 #include <LLGL/Backend/OpenGL/NativeHandle.h>
-
-#if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
-#   include "../Platform/Android/AndroidGLHardwareBuffer.h"
-#endif
 
 
 namespace LLGL
@@ -83,11 +82,11 @@ static GLSwizzleFormat MapToGLSwizzleFormat(const Format format)
 }
 
 GLTexture::GLTexture(const TextureDescriptor& desc) :
-    Texture         { desc.type, desc.bindFlags                                                         },
-    isExternal_     { (desc.external != nullptr)                                                        },
-    numMipLevels_   { (desc.external != nullptr ? 1 : static_cast<GLsizei>(NumMipLevels(desc)))         },
-    isRenderbuffer_ { (desc.external == nullptr && IsRenderbufferSufficient(desc))                      },
-    swizzleFormat_  { (desc.external != nullptr ? GLSwizzleFormat::RGBA : MapToGLSwizzleFormat(desc.format)) }
+    Texture         { desc.type, desc.bindFlags                },
+    target_         { GLStateManager::GetTextureTarget(desc.type) },
+    numMipLevels_   { static_cast<GLsizei>(NumMipLevels(desc)) },
+    isRenderbuffer_ { IsRenderbufferSufficient(desc)           },
+    swizzleFormat_  { MapToGLSwizzleFormat(desc.format)        }
 {
     if (IsRenderbuffer())
     {
@@ -137,17 +136,6 @@ GLTexture::~GLTexture()
     if (isExternalHandle_)
         return;
 
-    if (IsExternal())
-    {
-        /* Delete texture before its EGLImage, then release reference to the external image */
-        GLStateManager::Get().DeleteTexture(id_, GLTextureTarget::TextureExternalOES);
-        #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
-        AndroidGLDestroyImage(externalImage_);
-        AndroidGLReleaseHardwareBuffer(static_cast<AHardwareBuffer*>(externalHandle_));
-        #endif
-        return;
-    }
-
     if (IsRenderbuffer())
     {
         /* Delete renderbuffer and notify state manager */
@@ -156,7 +144,7 @@ GLTexture::~GLTexture()
     else
     {
         /* Delete texture and notify state manager as well as texture-view pool since this could be the source for a texture-view */
-        GLStateManager::Get().DeleteTexture(id_, GLStateManager::GetTextureTarget(GetType()));
+        GLStateManager::Get().DeleteTexture(id_, GetGLTextureTarget());
         GLTextureViewPool::Get().NotifyTextureRelease(id_);
     }
 }
@@ -183,7 +171,8 @@ bool GLTexture::GetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize
         }
 
         /* Return texture ID and query resource dimensions */
-        nativeHandleGL->id = GetID();
+        nativeHandleGL->id              = GetID();
+        nativeHandleGL->texture.target  = (IsRenderbuffer() ? GL_RENDERBUFFER : GLStateManager::ToGLTextureTarget(GetGLTextureTarget()));
         GetParams(nativeHandleGL->texture.extent, &(nativeHandleGL->texture.samples));
 
         return true;
@@ -917,7 +906,7 @@ void GLTexture::TextureSubImage(const TextureRegion& region, const ImageView& sr
             else
             #endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
             {
-                const GLTextureTarget target = GLStateManager::GetTextureTarget(GetType());
+                const GLTextureTarget target = GetGLTextureTarget();
                 if (restoreBoundTexture)
                 {
                     /* Bind texture and transfer image data to GL texture, then restore previously bound texture with state manager */
@@ -1207,7 +1196,7 @@ void GLTexture::GetTextureSubImage(const TextureRegion& region, const MutableIma
         #endif // /LLGL_GLEXT_GET_TEXTURE_SUB_IMAGE
         {
             /* Emulate functionality by copying the entire texture image into an intermediate buffer */
-            const GLTextureTarget target = GLStateManager::GetTextureTarget(GetType());
+            const GLTextureTarget target = GetGLTextureTarget();
             if (restoreBoundTexture)
             {
                 /* Bind texture and transfer image data to GL texture, then restore previously bound texture with state manager */
@@ -1225,50 +1214,11 @@ void GLTexture::GetTextureSubImage(const TextureRegion& region, const MutableIma
 
 GLenum GLTexture::GetGLTexTarget() const
 {
-    if (IsExternal())
+    #if LLGL_GLEXT_TEXTURE_EXTERNAL_OES
+    if (GetGLTextureTarget() == GLTextureTarget::TextureExternalOES)
         return GL_TEXTURE_EXTERNAL_OES;
+    #endif
     return GLTypes::Map(GetType());
-}
-
-GLTextureTarget GLTexture::GetGLTextureTarget() const
-{
-    if (IsExternal())
-        return GLTextureTarget::TextureExternalOES;
-    return GLStateManager::GetTextureTarget(GetType());
-}
-
-void GLTexture::BindAndImportExternalImage(const ExternalImageDescriptor& externalImageDesc)
-{
-    #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
-
-    if (externalImageDesc.type != ExternalImageType::AndroidHardwareBuffer || externalImageDesc.handle == nullptr)
-        LLGL_TRAP("cannot create GL texture from external image with null handle or unsupported type");
-
-    auto* buffer = static_cast<AHardwareBuffer*>(externalImageDesc.handle);
-
-    /* Bind texture to external target and attach EGLImage of hardware buffer */
-    GLStateManager::Get().BindTexture(GLTextureTarget::TextureExternalOES, id_);
-
-    externalImage_ = AndroidGLAttachHardwareBufferToBoundTexture(buffer, externalExtent_);
-    if (externalImage_ == nullptr)
-        LLGL_TRAP("failed to import Android hardware buffer as external GL texture");
-
-    /* Keep a reference to the hardware buffer as long as this texture is alive */
-    AndroidGLAcquireHardwareBuffer(buffer);
-    externalHandle_ = buffer;
-
-    /* External textures only support linear/nearest filters without MIP-maps and clamp-to-edge wrap modes */
-    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    #else // LLGL_GLEXT_EGL_IMAGE_EXTERNAL
-
-    (void)externalImageDesc;
-    LLGL_TRAP("external images are not supported by the OpenGL backend on this platform");
-
-    #endif // /LLGL_GLEXT_EGL_IMAGE_EXTERNAL
 }
 
 GLenum GLTexture::GetGLTexLevelTarget() const
@@ -1285,30 +1235,63 @@ void GLTexture::BindTexParameters(const GLEmulatedSampler& sampler)
     }
 }
 
-void GLTexture::SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize)
+// Returns the GL texture target for the specified native target, or false if the target is not supported.
+static bool GetGLTextureTargetFromNative(GLenum nativeTarget, TextureType type, GLTextureTarget& outTarget)
+{
+    const GLTextureTarget typeTarget = GLStateManager::GetTextureTarget(type);
+    if (nativeTarget == 0 || nativeTarget == GLStateManager::ToGLTextureTarget(typeTarget))
+    {
+        outTarget = typeTarget;
+        return true;
+    }
+    #if LLGL_GLEXT_TEXTURE_EXTERNAL_OES
+    if (nativeTarget == GL_TEXTURE_EXTERNAL_OES && type == TextureType::Texture2D)
+    {
+        outTarget = GLTextureTarget::TextureExternalOES;
+        return true;
+    }
+    #endif
+    return false;
+}
+
+bool GLTexture::SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize, bool own)
 {
     auto* nativeHandleGL = GetTypedNativeHandle<OpenGL::ResourceNativeHandle>(nativeHandle, nativeHandleSize);
-    if (!nativeHandleGL)
-        return;
+    if (nativeHandleGL == nullptr || nativeHandleGL->id == 0 || IsRenderbuffer())
+        return false;
 
-    // Release LLGL-owned GL object first
-    if (!isExternalHandle_)
+    /* Validate texture target before anything is changed */
+    GLTextureTarget target;
+    if (!GetGLTextureTargetFromNative(nativeHandleGL->texture.target, GetType(), target))
     {
-        if (IsRenderbuffer())
-        {
-            GLStateManager::Get().DeleteRenderbuffer(id_);
-        }
-        else
-        {
-            GLStateManager::Get().DeleteTexture(
-                id_, GLStateManager::GetTextureTarget(GetType()));
-            GLTextureViewPool::Get().NotifyTextureRelease(id_);
-        }
+        Log::Errorf("cannot set native GL texture with target 0x%04X for texture of type %s\n", nativeHandleGL->texture.target, ToString(GetType()));
+        return false;
     }
 
-    // Replace with caller-supplied (XR runtime-owned) GL name
-    id_ = nativeHandleGL->id;
-    isExternalHandle_ = true;   // destructor must NOT delete this
+    /* Release previous GL texture if it was owned by this object */
+    if (!isExternalHandle_)
+    {
+        GLStateManager::Get().DeleteTexture(id_, GetGLTextureTarget());
+        GLTextureViewPool::Get().NotifyTextureRelease(id_);
+    }
+
+    /* Take over native texture; it is deleted with this object only if owned */
+    id_                 = nativeHandleGL->id;
+    target_             = target;
+    isExternalHandle_   = !own;
+
+    #if !LLGL_GLEXT_GET_TEX_LEVEL_PARAMETER
+    /* GLES cannot query the texture dimensions, so take them from the native handle if specified */
+    if (nativeHandleGL->texture.extent[0] > 0)
+    {
+        for (int i = 0; i < 3; ++i)
+            extent_[i] = std::max(1, nativeHandleGL->texture.extent[i]);
+    }
+    if (nativeHandleGL->texture.samples > 0)
+        samples_ = nativeHandleGL->texture.samples;
+    #endif
+
+    return true;
 }
 
 /*
@@ -1333,7 +1316,7 @@ static GLint GetInitialGlTextureMagFilter(const TextureDescriptor& textureDesc)
 // Binds the specified GL texture temporarily. Only used to gather texture information, not to bind texture for the graphics or compute pipeline.
 static void BindGLTextureNonPersistent(const GLTexture& textureGL)
 {
-    GLStateManager::Get().BindTexture(GLStateManager::GetTextureTarget(textureGL.GetType()), textureGL.GetID());
+    GLStateManager::Get().BindTexture(textureGL.GetGLTextureTarget(), textureGL.GetID());
 }
 
 #if LLGL_OPENGL || GL_ES_VERSION_3_1
@@ -1432,20 +1415,6 @@ void GLTexture::GetParams(GLint* extent, GLint* samples) const
 
 void GLTexture::GetTextureParams(GLint* extent, GLint* samples) const
 {
-    if (IsExternal())
-    {
-        /* External textures cannot be queried with glGetTexLevelParameter, so return the dimensions of the external image */
-        if (extent != nullptr)
-        {
-            extent[0] = externalExtent_[0];
-            extent[1] = externalExtent_[1];
-            extent[2] = 1;
-        }
-        if (samples != nullptr)
-            *samples = 1;
-        return;
-    }
-
     #if LLGL_GLEXT_GET_TEX_LEVEL_PARAMETER
 
     #if LLGL_GLEXT_DIRECT_STATE_ACCESS
@@ -1466,7 +1435,7 @@ void GLTexture::GetTextureParams(GLint* extent, GLint* samples) const
     #endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
     {
         /* Push currently bound texture onto stack to restore it after query */
-        GLStateManager::Get().PushBoundTexture(GLStateManager::GetTextureTarget(GetType()));
+        GLStateManager::Get().PushBoundTexture(GetGLTextureTarget());
         {
             /* Bind texture and query attributes */
             BindGLTextureNonPersistent(*this);
@@ -1545,15 +1514,6 @@ void GLTexture::GetRenderbufferParams(GLint* extent, GLint* samples) const
 
 void GLTexture::GetTextureMipSize(GLint level, GLint (&texSize)[3]) const
 {
-    if (IsExternal())
-    {
-        /* External textures only have a single MIP-map level */
-        texSize[0] = (level == 0 ? externalExtent_[0] : 0);
-        texSize[1] = (level == 0 ? externalExtent_[1] : 0);
-        texSize[2] = (level == 0 ? 1 : 0);
-        return;
-    }
-
     #if LLGL_GLEXT_GET_TEX_LEVEL_PARAMETER
 
     #if LLGL_GLEXT_DIRECT_STATE_ACCESS
@@ -1568,7 +1528,7 @@ void GLTexture::GetTextureMipSize(GLint level, GLint (&texSize)[3]) const
     #endif // /LLGL_GLEXT_DIRECT_STATE_ACCESS
     {
         /* Push currently bound texture onto stack to restore it after query */
-        GLStateManager::Get().PushBoundTexture(GLStateManager::GetTextureTarget(GetType()));
+        GLStateManager::Get().PushBoundTexture(GetGLTextureTarget());
         {
             /* Bind texture and query attributes */
             BindGLTextureNonPersistent(*this);

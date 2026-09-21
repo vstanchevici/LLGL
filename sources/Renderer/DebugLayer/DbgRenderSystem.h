@@ -46,8 +46,6 @@ class DbgRenderSystem final : public RenderSystem
 
         DbgRenderSystem(RenderSystemPtr&& instance, RenderingDebugger* debugger);
 
-        bool QueryExternalImageProperties(const ExternalImageDescriptor& externalImageDesc, ExternalImageProperties& outProperties) override;
-
         void FlushProfile();
 
         bool IsVulkan() const;
@@ -76,7 +74,6 @@ class DbgRenderSystem final : public RenderSystem
         void ValidateTextureDesc(const TextureDescriptor& textureDesc, const ImageView* initialImage = nullptr);
         void ValidateTextureFormatSupported(const Format format);
         void ValidateTextureDescMipLevels(const TextureDescriptor& textureDesc);
-        void ValidateExternalTextureDesc(const TextureDescriptor& textureDesc, const ImageView* initialImage);
         void ValidateYcbcrConversionDesc(const YcbcrConversionDescriptor& ycbcrDesc, const char* contextDesc);
         void ValidateSamplerDesc(const SamplerDescriptor& samplerDesc);
         void ValidatePipelineLayoutYcbcrBindings(const PipelineLayoutDescriptor& pipelineLayoutDesc);

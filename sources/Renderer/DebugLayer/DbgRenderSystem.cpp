@@ -256,12 +256,7 @@ void DbgRenderSystem::UnmapBuffer(Buffer& buffer)
 Texture* DbgRenderSystem::CreateTexture(const TextureDescriptor& textureDesc, const ImageView* initialImage)
 {
     if (LLGL_DBG_SOURCE())
-    {
-        if (textureDesc.external != nullptr)
-            ValidateExternalTextureDesc(textureDesc, initialImage);
-        else
-            ValidateTextureDesc(textureDesc, initialImage);
-    }
+        ValidateTextureDesc(textureDesc, initialImage);
     Texture* textureInstance = instance_->CreateTexture(textureDesc, initialImage);
     if (textureInstance == nullptr)
         return nullptr;
@@ -304,16 +299,6 @@ void DbgRenderSystem::ReadTexture(Texture& texture, const TextureRegion& texture
 }
 
 /* ----- Sampler States ---- */
-
-bool DbgRenderSystem::QueryExternalImageProperties(const ExternalImageDescriptor& externalImageDesc, ExternalImageProperties& outProperties)
-{
-    if (LLGL_DBG_SOURCE())
-    {
-        if (externalImageDesc.type == ExternalImageType::Undefined || externalImageDesc.handle == nullptr)
-            LLGL_DBG_ERROR(ErrorType::InvalidArgument, "cannot query properties of external image with null handle or undefined type");
-    }
-    return instance_->QueryExternalImageProperties(externalImageDesc, outProperties);
-}
 
 Sampler* DbgRenderSystem::CreateSampler(const SamplerDescriptor& samplerDesc)
 {
@@ -1062,7 +1047,7 @@ void DbgRenderSystem::ValidateTextureDesc(const TextureDescriptor& textureDesc, 
     if (textureDesc.ycbcrConversion != nullptr)
     {
         ValidateYcbcrConversionDesc(*textureDesc.ycbcrConversion, "texture");
-        if (textureDesc.ycbcrConversion->externalFormat == 0 && textureDesc.ycbcrConversion->format != textureDesc.format)
+        if (textureDesc.ycbcrConversion->format != textureDesc.format)
         {
             LLGL_DBG_ERROR(
                 ErrorType::InvalidArgument,
@@ -1100,43 +1085,13 @@ void DbgRenderSystem::ValidateTextureDesc(const TextureDescriptor& textureDesc, 
     }
 }
 
-void DbgRenderSystem::ValidateExternalTextureDesc(const TextureDescriptor& textureDesc, const ImageView* initialImage)
-{
-    const ExternalImageDescriptor& externalDesc = *textureDesc.external;
-
-    if (!GetRenderingCaps().features.hasExternalImageAndroid)
-        LLGL_DBG_ERROR(ErrorType::UnsupportedFeature, "external images are not supported by this renderer");
-    if (externalDesc.type == ExternalImageType::Undefined || externalDesc.handle == nullptr)
-        LLGL_DBG_ERROR(ErrorType::InvalidArgument, "cannot create external texture with null handle or undefined type");
-    if (textureDesc.type != TextureType::Texture2D)
-        LLGL_DBG_ERROR(ErrorType::InvalidArgument, "external textures must be of type 'Texture2D'");
-    if (textureDesc.bindFlags != BindFlags::Sampled)
-        LLGL_DBG_ERROR(ErrorType::InvalidArgument, "external textures can only have binding flag 'Sampled'");
-    if (initialImage != nullptr)
-        LLGL_DBG_ERROR(ErrorType::InvalidArgument, "cannot specify initial image data for external textures");
-    if (textureDesc.ycbcrConversion != nullptr)
-        ValidateYcbcrConversionDesc(*textureDesc.ycbcrConversion, "external texture");
-}
-
 void DbgRenderSystem::ValidateYcbcrConversionDesc(const YcbcrConversionDescriptor& ycbcrDesc, const char* contextDesc)
 {
-    /*
-    Backends without configurable Y'CbCr conversions (e.g. GLES) still accept the descriptor for external images,
-    since the driver performs the conversion implicitly (see ExternalImageProperties::ycbcrConversion).
-    */
-    const RenderingFeatures& features = GetRenderingCaps().features;
-    if (!features.hasSamplerYcbcrConversion && !features.hasExternalImageAndroid)
+    if (!GetRenderingCaps().features.hasSamplerYcbcrConversion)
         LLGL_DBG_ERROR(ErrorType::UnsupportedFeature, "Y'CbCr sampler conversions are not supported by this renderer (%s)", contextDesc);
 
-    if (ycbcrDesc.externalFormat != 0)
-    {
-        if (ycbcrDesc.format != Format::Undefined)
-            LLGL_DBG_ERROR(ErrorType::InvalidArgument, "Y'CbCr conversion for %s must have undefined format when an external format is specified", contextDesc);
-    }
-    else if (ycbcrDesc.format == Format::Undefined)
-    {
-        LLGL_DBG_ERROR(ErrorType::InvalidArgument, "Y'CbCr conversion for %s requires either a format or an external format", contextDesc);
-    }
+    if (!IsMultiPlanarFormat(ycbcrDesc.format))
+        LLGL_DBG_ERROR(ErrorType::InvalidArgument, "Y'CbCr conversion for %s requires a multi-planar format, but %s was specified", contextDesc, ToString(ycbcrDesc.format));
 }
 
 void DbgRenderSystem::ValidateSamplerDesc(const SamplerDescriptor& samplerDesc)

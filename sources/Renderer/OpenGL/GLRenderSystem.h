@@ -64,8 +64,6 @@ class GLRenderSystem final : public RenderSystem
         GLRenderSystem(const RenderSystemDescriptor& renderSystemDesc);
         ~GLRenderSystem();
 
-        bool QueryExternalImageProperties(const ExternalImageDescriptor& externalImageDesc, ExternalImageProperties& outProperties) override;
-
     public:
 
         inline bool IsBreakOnErrorEnabled() const

@@ -345,7 +345,6 @@ void VKPhysicalDevice::QueryRenderingCaps(RenderingCapabilities& caps)
     caps.features.hasRenderCondition                = SupportsExtension(VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME);
     caps.features.hasPipelineCaching                = true;
     caps.features.hasSamplerYcbcrConversion         = hasSamplerYcbcrConversion;
-    caps.features.hasExternalImageAndroid           = (hasSamplerYcbcrConversion && HasExtension(VKExt::ANDROID_external_memory_android_hardware_buffer));
 
     /* Query limits */
     caps.limits.lineWidthRange[0]                   = limits.lineWidthRange[0];

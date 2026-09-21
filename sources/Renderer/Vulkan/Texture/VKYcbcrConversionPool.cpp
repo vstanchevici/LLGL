@@ -56,11 +56,9 @@ static VkChromaLocation ToVkChromaLocation(const ChromaLocation location)
 }
 
 // Returns a chroma location that is supported by the specified format features, preferring the requested location.
-static VkChromaLocation GetSupportedVkChromaLocation(const ChromaLocation location, VkFormatFeatureFlags formatFeatures, bool hasKnownFormatFeatures)
+static VkChromaLocation GetSupportedVkChromaLocation(const ChromaLocation location, VkFormatFeatureFlags formatFeatures)
 {
     const VkChromaLocation requested = ToVkChromaLocation(location);
-    if (!hasKnownFormatFeatures)
-        return requested;
 
     const bool supportsMidpoint = ((formatFeatures & VK_FORMAT_FEATURE_MIDPOINT_CHROMA_SAMPLES_BIT) != 0);
     const bool supportsCosited  = ((formatFeatures & VK_FORMAT_FEATURE_COSITED_CHROMA_SAMPLES_BIT ) != 0);
@@ -82,49 +80,28 @@ static VkChromaLocation GetSupportedVkChromaLocation(const ChromaLocation locati
 VKYcbcrConversion::VKYcbcrConversion(
     VkDevice                            device,
     const YcbcrConversionDescriptor&    desc,
-    VkFormatFeatureFlags                formatFeatures,
-    bool                                hasKnownFormatFeatures)
+    VkFormatFeatureFlags                formatFeatures)
 :
-    device_ { device                                                                        },
-    desc_   { desc                                                                          },
-    format_ { (desc.externalFormat != 0 ? VK_FORMAT_UNDEFINED : VKTypes::Map(desc.format))  }
+    device_ { device                    },
+    desc_   { desc                      },
+    format_ { VKTypes::Map(desc.format) }
 {
     LLGL_ASSERT(vkCreateSamplerYcbcrConversionKHR != nullptr, "sampler Y'CbCr conversion not supported by Vulkan device");
 
-    /*
-    Fall back to nearest chroma filter if the format does not support linear filtering for chroma reconstruction.
-    If the format features are unknown, i.e. an external format was not queried with RenderSystem::QueryExternalImageProperties,
-    the nearest filter is used as well, since it is the only filter all formats are guaranteed to support.
-    */
+    /* Fall back to nearest chroma filter if the format does not support linear filtering for chroma reconstruction */
     chromaFilter_ = (desc.chromaFilter == SamplerFilter::Linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
-    if (chromaFilter_ == VK_FILTER_LINEAR)
+    if (chromaFilter_ == VK_FILTER_LINEAR && (formatFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER_BIT) == 0)
     {
-        if (!hasKnownFormatFeatures)
-        {
-            Log::Printf(
-                "Y'CbCr conversion: format features of external format are unknown; falling back to nearest chroma filter."
-                " Use RenderSystem::QueryExternalImageProperties before creating the sampler to enable linear filtering\n"
-            );
-            chromaFilter_ = VK_FILTER_NEAREST;
-        }
-        else if ((formatFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER_BIT) == 0)
-        {
-            Log::Printf("Y'CbCr conversion: linear chroma filter not supported by format; falling back to nearest\n");
-            chromaFilter_ = VK_FILTER_NEAREST;
-        }
+        Log::Printf("Y'CbCr conversion: linear chroma filter not supported by format; falling back to nearest\n");
+        chromaFilter_ = VK_FILTER_NEAREST;
     }
 
-    /* Without known format features, conservatively assume min/mag filters must be equal to the chroma filter */
-    hasSeparateReconstructionFilter_ =
-    (
-        hasKnownFormatFeatures &&
-        (formatFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER_BIT) != 0
-    );
+    hasSeparateReconstructionFilter_ = ((formatFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER_BIT) != 0);
 
     const bool forceExplicitReconstruction =
     (
         desc.forceExplicitReconstruction &&
-        (!hasKnownFormatFeatures || (formatFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE_BIT) != 0)
+        (formatFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE_BIT) != 0
     );
 
     /* Create native sampler Y'CbCr conversion */
@@ -139,37 +116,49 @@ VKYcbcrConversion::VKYcbcrConversion(
         createInfo.components.g                 = VKTypes::ToVkComponentSwizzle(desc.swizzle.g);
         createInfo.components.b                 = VKTypes::ToVkComponentSwizzle(desc.swizzle.b);
         createInfo.components.a                 = VKTypes::ToVkComponentSwizzle(desc.swizzle.a);
-        createInfo.xChromaOffset                = GetSupportedVkChromaLocation(desc.xChromaOffset, formatFeatures, hasKnownFormatFeatures);
-        createInfo.yChromaOffset                = GetSupportedVkChromaLocation(desc.yChromaOffset, formatFeatures, hasKnownFormatFeatures);
+        createInfo.xChromaOffset                = GetSupportedVkChromaLocation(desc.xChromaOffset, formatFeatures);
+        createInfo.yChromaOffset                = GetSupportedVkChromaLocation(desc.yChromaOffset, formatFeatures);
         createInfo.chromaFilter                 = chromaFilter_;
         createInfo.forceExplicitReconstruction  = VKBoolean(forceExplicitReconstruction);
     }
 
-    #if VK_ANDROID_external_memory_android_hardware_buffer
-    VkExternalFormatANDROID externalFormatInfo;
-    if (desc.externalFormat != 0)
-    {
-        externalFormatInfo.sType            = VK_STRUCTURE_TYPE_EXTERNAL_FORMAT_ANDROID;
-        externalFormatInfo.pNext            = nullptr;
-        externalFormatInfo.externalFormat   = desc.externalFormat;
-        createInfo.pNext = &externalFormatInfo;
-    }
-    #else
-    LLGL_ASSERT(desc.externalFormat == 0, "external formats for Y'CbCr conversions are only supported on Android");
-    #endif
-
     VkResult result = vkCreateSamplerYcbcrConversionKHR(device, &createInfo, nullptr, &conversion_);
     VKThrowIfCreateFailed(result, "VkSamplerYcbcrConversion");
 
-    CreateCanonicalSampler(hasKnownFormatFeatures && (formatFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0);
+    CreateCanonicalSampler((formatFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0);
+}
+
+VKYcbcrConversion::VKYcbcrConversion(
+    VkDevice                    device,
+    VkSamplerYcbcrConversion    nativeConversion,
+    VkSampler                   nativeSampler,
+    VkFormat                    format,
+    bool                        own)
+:
+    device_             { device           },
+    conversion_         { nativeConversion },
+    canonicalSampler_   { nativeSampler    },
+    format_             { format           },
+    isNative_           { true             },
+    ownsNativeObjects_  { own              }
+{
 }
 
 VKYcbcrConversion::~VKYcbcrConversion()
 {
+    if (!ownsNativeObjects_)
+        return;
+
     if (canonicalSampler_ != VK_NULL_HANDLE)
         vkDestroySampler(device_, canonicalSampler_, nullptr);
+
     if (conversion_ != VK_NULL_HANDLE)
-        vkDestroySamplerYcbcrConversionKHR(device_, conversion_, nullptr);
+    {
+        if (vkDestroySamplerYcbcrConversionKHR != nullptr)
+            vkDestroySamplerYcbcrConversionKHR(device_, conversion_, nullptr);
+        else
+            Log::Errorf("cannot destroy VkSamplerYcbcrConversion, since the samplerYcbcrConversion feature is not enabled for this device\n");
+    }
 }
 
 void VKYcbcrConversion::CreateCanonicalSampler(bool supportsLinearFilter)
@@ -225,9 +214,8 @@ VKYcbcrConversionPool::VKYcbcrConversionPool(VkDevice device, VkPhysicalDevice p
 {
 }
 
-VKYcbcrConversionSPtr VKYcbcrConversionPool::Acquire(const YcbcrConversionDescriptor& desc)
+void VKYcbcrConversionPool::RemoveExpiredEntries()
 {
-    /* Remove expired entries and find an existing conversion with an identical descriptor */
     conversions_.erase(
         std::remove_if(
             conversions_.begin(),
@@ -239,51 +227,55 @@ VKYcbcrConversionSPtr VKYcbcrConversionPool::Acquire(const YcbcrConversionDescri
         ),
         conversions_.end()
     );
+}
+
+VKYcbcrConversionSPtr VKYcbcrConversionPool::Acquire(const YcbcrConversionDescriptor& desc)
+{
+    /* Remove expired entries and find an existing conversion with an identical descriptor */
+    RemoveExpiredEntries();
 
     for (const std::weak_ptr<VKYcbcrConversion>& entry : conversions_)
     {
         if (VKYcbcrConversionSPtr conversion = entry.lock())
         {
-            if (conversion->GetDesc() == desc)
+            if (!conversion->IsNative() && conversion->GetDesc() == desc)
                 return conversion;
         }
     }
 
-    /* Create new conversion */
-    VkFormatFeatureFlags formatFeatures = 0;
-    const bool hasKnownFormatFeatures = GetFormatFeatures(desc, formatFeatures);
+    /* Create new conversion with the features of its format */
+    VkFormatProperties formatProperties;
+    vkGetPhysicalDeviceFormatProperties(physicalDevice_, VKTypes::Map(desc.format), &formatProperties);
 
-    auto conversion = std::make_shared<VKYcbcrConversion>(device_, desc, formatFeatures, hasKnownFormatFeatures);
+    auto conversion = std::make_shared<VKYcbcrConversion>(device_, desc, formatProperties.optimalTilingFeatures);
     conversions_.push_back(conversion);
     return conversion;
 }
 
-void VKYcbcrConversionPool::RegisterExternalFormatFeatures(std::uint64_t externalFormat, VkFormatFeatureFlags formatFeatures)
+VKYcbcrConversionSPtr VKYcbcrConversionPool::AcquireNative(VkSamplerYcbcrConversion nativeConversion, VkSampler nativeSampler, VkFormat format, bool own)
 {
-    if (externalFormat != 0)
-        externalFormatFeatures_[externalFormat] = formatFeatures;
-}
+    /* Remove expired entries and find an existing wrapper for the same native objects */
+    RemoveExpiredEntries();
 
-bool VKYcbcrConversionPool::GetFormatFeatures(const YcbcrConversionDescriptor& desc, VkFormatFeatureFlags& outFormatFeatures) const
-{
-    if (desc.externalFormat != 0)
+    for (const std::weak_ptr<VKYcbcrConversion>& entry : conversions_)
     {
-        /* External format features are only known if they have been registered before, e.g. by querying the external image */
-        auto it = externalFormatFeatures_.find(desc.externalFormat);
-        if (it != externalFormatFeatures_.end())
+        if (VKYcbcrConversionSPtr conversion = entry.lock())
         {
-            outFormatFeatures = it->second;
-            return true;
+            if (conversion->IsNative() &&
+                conversion->GetVkSamplerYcbcrConversion() == nativeConversion &&
+                conversion->GetCanonicalVkSampler() == nativeSampler)
+            {
+                if (own)
+                    conversion->TakeOwnership();
+                return conversion;
+            }
         }
-        return false;
     }
-    else
-    {
-        VkFormatProperties formatProperties;
-        vkGetPhysicalDeviceFormatProperties(physicalDevice_, VKTypes::Map(desc.format), &formatProperties);
-        outFormatFeatures = formatProperties.optimalTilingFeatures;
-        return true;
-    }
+
+    /* Create new wrapper for native objects */
+    auto conversion = std::make_shared<VKYcbcrConversion>(device_, nativeConversion, nativeSampler, format, own);
+    conversions_.push_back(conversion);
+    return conversion;
 }
 
 

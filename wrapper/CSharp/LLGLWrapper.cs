@@ -802,12 +802,6 @@ namespace LLGL
         Alpha,
     }
 
-    public enum ExternalImageType
-    {
-        Undefined,
-        AndroidHardwareBuffer,
-    }
-
     /* ----- Flags ----- */
 
     [Flags]
@@ -1494,7 +1488,6 @@ namespace LLGL
         public bool HasPipelineStatistics { get; set; }        = false;
         public bool HasRenderCondition { get; set; }           = false;
         public bool HasSamplerYcbcrConversion { get; set; }    = false;
-        public bool HasExternalImageAndroid { get; set; }      = false;
 
         public RenderingFeatures() { }
 
@@ -1536,7 +1529,6 @@ namespace LLGL
                 HasPipelineStatistics        = value.hasPipelineStatistics;
                 HasRenderCondition           = value.hasRenderCondition;
                 HasSamplerYcbcrConversion    = value.hasSamplerYcbcrConversion;
-                HasExternalImageAndroid      = value.hasExternalImageAndroid;
             }
         }
     }
@@ -3233,35 +3225,6 @@ namespace LLGL
         public int                         MipLevels { get; set; }       = 0;
         public int                         Samples { get; set; }         = 1;
         public ClearValue                  ClearValue { get; set; }      = new ClearValue();
-        private ExternalImageDescriptor[] external;
-        private NativeLLGL.ExternalImageDescriptor[] externalNative;
-        public ExternalImageDescriptor[] External
-        {
-            get
-            {
-                return external;
-            }
-            set
-            {
-                if (value != null)
-                {
-                    external = value;
-                    externalNative = new NativeLLGL.ExternalImageDescriptor[external.Length];
-                    for (int externalIndex = 0; externalIndex < external.Length; ++externalIndex)
-                    {
-                        if (external[externalIndex] != null)
-                        {
-                            externalNative[externalIndex] = external[externalIndex].Native;
-                        }
-                    }
-                }
-                else
-                {
-                    external = null;
-                    externalNative = null;
-                }
-            }
-        }
         private YcbcrConversionDescriptor[] ycbcrConversion;
         private NativeLLGL.YcbcrConversionDescriptor[] ycbcrConversionNative;
         public YcbcrConversionDescriptor[] YcbcrConversion
@@ -3323,14 +3286,6 @@ namespace LLGL
                     {
                         native.clearValue = ClearValue.Native;
                     }
-                    if (external != null)
-                    {
-                        native.numExternal = (IntPtr)external.Length;
-                        fixed (NativeLLGL.ExternalImageDescriptor* externalPtr = externalNative)
-                        {
-                            native.external = externalPtr;
-                        }
-                    }
                     if (ycbcrConversion != null)
                     {
                         native.numYcbcrConversion = (IntPtr)ycbcrConversion.Length;
@@ -3357,11 +3312,6 @@ namespace LLGL
                     MipLevels       = value.mipLevels;
                     Samples         = value.samples;
                     ClearValue.Native= value.clearValue;
-                    External        = new ExternalImageDescriptor[(int)value.numExternal];
-                    for (int i = 0; i < External.Length; ++i)
-                    {
-                        External[i] = new ExternalImageDescriptor(value.external[i]);
-                    }
                     YcbcrConversion = new YcbcrConversionDescriptor[(int)value.numYcbcrConversion];
                     for (int i = 0; i < YcbcrConversion.Length; ++i)
                     {
@@ -4047,8 +3997,6 @@ namespace LLGL
             public bool hasRenderCondition;           /* = false */
             [MarshalAs(UnmanagedType.I1)]
             public bool hasSamplerYcbcrConversion;    /* = false */
-            [MarshalAs(UnmanagedType.I1)]
-            public bool hasExternalImageAndroid;      /* = false */
         }
 
         public unsafe struct RenderingLimits
@@ -4171,11 +4119,11 @@ namespace LLGL
         public unsafe struct BindingDescriptor
         {
             public byte*        name;
-            public ResourceType type;             /* = ResourceType.Undefined */
-            public int          bindFlags;        /* = 0 */
-            public int          stageFlags;       /* = 0 */
+            public ResourceType type;       /* = ResourceType.Undefined */
+            public int          bindFlags;  /* = 0 */
+            public int          stageFlags; /* = 0 */
             public BindingSlot  slot;
-            public int          arraySize;        /* = 0 */
+            public int          arraySize;  /* = 0 */
         }
 
         public unsafe struct UniformDescriptor
@@ -4332,12 +4280,6 @@ namespace LLGL
             public bool     resizable;   /* = false */
         }
 
-        public unsafe struct ExternalImageDescriptor
-        {
-            public ExternalImageType type;   /* = ExternalImageType.Undefined */
-            public void*             handle; /* = null */
-        }
-
         public unsafe struct VertexAttribute
         {
             public byte*       name;
@@ -4449,7 +4391,6 @@ namespace LLGL
         public unsafe struct YcbcrConversionDescriptor
         {
             public Format             format;                      /* = Format.Undefined */
-            public long               externalFormat;              /* = 0 */
             public YcbcrModel         model;                       /* = YcbcrModel.Ycbcr709 */
             public YcbcrRange         range;                       /* = YcbcrRange.Narrow */
             public ChromaLocation     xChromaOffset;               /* = ChromaLocation.Midpoint */
@@ -4532,17 +4473,6 @@ namespace LLGL
             public BlendDescriptor      blend;
         }
 
-        public unsafe struct ExternalImageProperties
-        {
-            public Extent3D                  extent;
-            public Format                    format;                     /* = Format.Undefined */
-            public YcbcrConversionDescriptor ycbcrConversion;
-            [MarshalAs(UnmanagedType.I1)]
-            public bool                      requiresYcbcr;              /* = false */
-            [MarshalAs(UnmanagedType.I1)]
-            public bool                      supportsLinearChromaFilter; /* = false */
-        }
-
         public unsafe struct ResourceViewDescriptor
         {
             public Resource              resource;     /* = null */
@@ -4613,7 +4543,6 @@ namespace LLGL
             public int                        mipLevels;       /* = 0 */
             public int                        samples;         /* = 1 */
             public ClearValue                 clearValue;
-            public ExternalImageDescriptor*   external;        /* = null */
             public YcbcrConversionDescriptor* ycbcrConversion; /* = null */
         }
 
@@ -5160,10 +5089,6 @@ namespace LLGL
 
         [DllImport(DllName, EntryPoint="llglReadTexture", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe void ReadTexture(Texture texture, ref TextureRegion textureRegion, ref MutableImageView dstImageView);
-
-        [DllImport(DllName, EntryPoint="llglQueryExternalImageProperties", CallingConvention=CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.I1)]
-        public static extern unsafe bool QueryExternalImageProperties(ref ExternalImageDescriptor externalImageDesc, ref ExternalImageProperties outProperties);
 
         [DllImport(DllName, EntryPoint="llglCreateSampler", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe Sampler CreateSampler(ref SamplerDescriptor samplerDesc);

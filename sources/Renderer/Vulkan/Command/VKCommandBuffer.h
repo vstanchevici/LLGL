@@ -62,12 +62,6 @@ class VKCommandBuffer final : public CommandBuffer
         // i.e. it won't need another signal for the next submission.
         VkFence GetQueueSubmitFenceAndFlush();
 
-        /*
-        Submits the current native command buffer to the specified queue.
-        If external textures were bound, the prologue command buffer that acquires them from their external producer is submitted in the same batch.
-        */
-        VkResult SubmitToQueue(VkQueue queue);
-
         // Returns the native VkCommandBuffer object.
         inline VkCommandBuffer GetVkCommandBuffer() const
         {
@@ -149,15 +143,6 @@ class VKCommandBuffer final : public CommandBuffer
 
         void ResetYcbcrBindingStates();
 
-        // Remembers the specified external texture, so its ownership is transferred when this command buffer is submitted.
-        void TrackExternalTexture(VKTexture& textureVK);
-
-        // Records barriers at the end of this command buffer that release ownership of all external textures to their producer.
-        void RecordExternalTextureReleaseBarriers();
-
-        // Records the prologue command buffer that acquires ownership of all external textures from their producer.
-        void RecordExternalTextureAcquirePrologue();
-
         // Acquires the next native VkCommandBuffer object.
         void AcquireNextBuffer();
 
@@ -169,9 +154,6 @@ class VKCommandBuffer final : public CommandBuffer
         #endif
 
         void BindVertexBuffer(VKBuffer& bufferVK);
-
-        // Returns the queue family index for ownership transfers of external resources.
-        std::uint32_t GetExternalQueueFamilyIndex() const;
 
     private:
 
@@ -235,11 +217,6 @@ class VKCommandBuffer final : public CommandBuffer
         VkSubpassContents               subpassContents_                                = VK_SUBPASS_CONTENTS_INLINE;
 
         std::uint32_t                   queuePresentFamily_                             = 0;
-        std::uint32_t                   queueGraphicsFamily_                            = 0;
-
-        VkCommandBuffer                 prologueBufferArray_[maxNumCommandBuffers]      = {}; // Acquires external textures; allocated on demand
-        bool                            prologueRecorded_[maxNumCommandBuffers]         = {};
-        std::vector<VKTexture*>         externalTextures_;                                  // External textures bound since Begin()
 
         bool                            scissorEnabled_                                 = false;
         bool                            hasDynamicScissorRect_                          = false;

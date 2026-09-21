@@ -240,14 +240,6 @@ LLGL_C_EXPORT void llglReadTexture(LLGLTexture texture, const LLGLTextureRegion*
     g_CurrentRenderSystem->ReadTexture(LLGL_REF(Texture, texture), *reinterpret_cast<const TextureRegion*>(textureRegion), *reinterpret_cast<const MutableImageView*>(dstImageView));
 }
 
-LLGL_C_EXPORT bool llglQueryExternalImageProperties(const LLGLExternalImageDescriptor* externalImageDesc, LLGLExternalImageProperties* outProperties)
-{
-    LLGL_ASSERT_RENDER_SYSTEM();
-    LLGL_ASSERT_PTR(externalImageDesc);
-    LLGL_ASSERT_PTR(outProperties);
-    return g_CurrentRenderSystem->QueryExternalImageProperties(*reinterpret_cast<const ExternalImageDescriptor*>(externalImageDesc), *reinterpret_cast<ExternalImageProperties*>(outProperties));
-}
-
 LLGL_C_EXPORT LLGLSampler llglCreateSampler(const LLGLSamplerDescriptor* samplerDesc)
 {
     LLGL_ASSERT_RENDER_SYSTEM();

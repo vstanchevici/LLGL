@@ -109,11 +109,34 @@ struct ResourceNativeHandle
         std::uint32_t           numArrayLayers;     //!< Number of array layers.
         VkSampleCountFlagBits   sampleCountBits;    //!< Sample count bitmask for multi-sampled textures.
         VkImageUsageFlags       imageUsageFlags;    //!< Image usag flags the texture was created with.
+
+        /**
+        \brief Device memory the image is bound to. May be VK_NULL_HANDLE.
+        \remarks This is only used by Resource::SetNativeHandle with \c own set to true, in which case the memory is freed together with the image.
+        GetNativeHandle always returns VK_NULL_HANDLE, since LLGL manages the memory of its own images in larger chunks.
+        */
+        VkDeviceMemory              memory;
+
+        /**
+        \brief Optional sampler Y'CbCr conversion the image must be viewed and sampled with. May be VK_NULL_HANDLE.
+        \remarks If this is not null, \c ycbcrSampler must be a sampler that was created with the same conversion.
+        The image view is created with this conversion and the texture can be bound to a combined texture-sampler
+        whose sampler binding has BindFlags::SamplerYcbcrConversion. For images with an external format, \c format is VK_FORMAT_UNDEFINED.
+        \remarks Textures that share the same conversion and sampler handles share the same pipeline variant.
+        */
+        VkSamplerYcbcrConversion    ycbcrConversion;
+
+        /**
+        \brief Sampler that was created with \c ycbcrConversion. It is used as immutable sampler of the combined texture-sampler. May be VK_NULL_HANDLE.
+        \see BindFlags::SamplerYcbcrConversion
+        */
+        VkSampler                   ycbcrSampler;
     };
 
     struct NativeSampler
     {
-        VkSampler sampler;  //!< Native Vulkan VkSampler object.
+        VkSampler                   sampler;            //!< Native Vulkan VkSampler object.
+        VkSamplerYcbcrConversion    ycbcrConversion;    //!< Optional sampler Y'CbCr conversion the sampler was created with. May be VK_NULL_HANDLE.
     };
 
     /**

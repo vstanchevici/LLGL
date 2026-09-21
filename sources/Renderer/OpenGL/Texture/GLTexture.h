@@ -44,9 +44,6 @@ class GLTexture final : public Texture
         // Initializes the texture storage with an optional image data; the texture will be bound to the current active texture unit.
         void BindAndAllocStorage(const TextureDescriptor& textureDesc, const ImageView* initialImage = nullptr);
 
-        // Attaches the specified external image to this texture; the texture will be bound to the current active texture unit.
-        void BindAndImportExternalImage(const ExternalImageDescriptor& externalImageDesc);
-
         // Copies the specified source texture into this texture.
         void CopyImageSubData(
             GLint           dstLevel,
@@ -85,9 +82,6 @@ class GLTexture final : public Texture
 
         // Returns the GL_TEXTURE_TARGET parameter of this texture.
         GLenum GetGLTexTarget() const;
-
-        // Returns the texture target this texture is bound to, e.g. GLTextureTarget::TextureExternalOES for external textures.
-        GLTextureTarget GetGLTextureTarget() const;
 
         /*
         Returns the GL_TEXTURE_TARGET parameter of this texture for MIP-map levels,
@@ -128,13 +122,17 @@ class GLTexture final : public Texture
             return swizzleFormat_;
         }
 
-        // Returns true if this texture was created from an external image (see TextureDescriptor::external).
-        inline bool IsExternal() const
-        {
-            return isExternal_;
-        }
+        /*
+        Replaces the GL texture with a native texture (see Resource::SetNativeHandle).
+        OpenGL::ResourceNativeHandle::texture::target can specify GL_TEXTURE_EXTERNAL_OES for an image that was imported via an EGLImage.
+        */
+        bool SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize, bool own = false) override;
 
-        void SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize) override;
+        // Returns the texture target this texture is bound to, e.g. GLTextureTarget::TextureExternalOES for native external textures.
+        inline GLTextureTarget GetGLTextureTarget() const
+        {
+            return target_;
+        }
 
     public:
 
@@ -163,12 +161,8 @@ class GLTexture final : public Texture
         GLuint                      id_                     = 0;                        // GL object name for texture or renderbuffer
         GLenum                      internalFormat_         = 0;
 
-        bool                        isExternalHandle_ = false;
-
-        const bool                  isExternal_             = false;                    // Texture refers to an external image via GL_TEXTURE_EXTERNAL_OES
-        void*                       externalImage_          = nullptr;                  // EGLImage of the external image
-        void*                       externalHandle_         = nullptr;                  // Reference to the external image handle, e.g. AHardwareBuffer*
-        GLint                       externalExtent_[2]      = {};
+        bool                        isExternalHandle_       = false;                    // GL object is only referenced, i.e. not deleted by this texture (see SetNativeHandle)
+        GLTextureTarget             target_                 = GLTextureTarget::Texture2D;
 
         const GLsizei               numMipLevels_           = 1;
         const bool                  isRenderbuffer_         = false;

@@ -388,9 +388,6 @@ LLGL_STATIC_ASSERT_ENUM(TextureSwizzle, Green);
 LLGL_STATIC_ASSERT_ENUM(TextureSwizzle, Blue);
 LLGL_STATIC_ASSERT_ENUM(TextureSwizzle, Alpha);
 
-LLGL_STATIC_ASSERT_ENUM(ExternalImageType, Undefined);
-LLGL_STATIC_ASSERT_ENUM(ExternalImageType, AndroidHardwareBuffer);
-
 LLGL_STATIC_ASSERT_ENUM(SamplerAddressMode, Repeat);
 LLGL_STATIC_ASSERT_ENUM(SamplerAddressMode, Mirror);
 LLGL_STATIC_ASSERT_ENUM(SamplerAddressMode, Clamp);
@@ -921,7 +918,6 @@ LLGL_STATIC_ASSERT_OFFSET(TextureDescriptor, arrayLayers);
 LLGL_STATIC_ASSERT_OFFSET(TextureDescriptor, mipLevels);
 LLGL_STATIC_ASSERT_OFFSET(TextureDescriptor, samples);
 LLGL_STATIC_ASSERT_OFFSET(TextureDescriptor, clearValue);
-LLGL_STATIC_ASSERT_OFFSET(TextureDescriptor, external);
 LLGL_STATIC_ASSERT_OFFSET(TextureDescriptor, ycbcrConversion);
 
 LLGL_STATIC_ASSERT_SIZE(TextureViewDescriptor);
@@ -977,7 +973,6 @@ LLGL_STATIC_ASSERT_OFFSET(RenderingFeatures, hasPipelineCaching);
 LLGL_STATIC_ASSERT_OFFSET(RenderingFeatures, hasPipelineStatistics);
 LLGL_STATIC_ASSERT_OFFSET(RenderingFeatures, hasRenderCondition);
 LLGL_STATIC_ASSERT_OFFSET(RenderingFeatures, hasSamplerYcbcrConversion);
-LLGL_STATIC_ASSERT_OFFSET(RenderingFeatures, hasExternalImageAndroid);
 
 LLGL_STATIC_ASSERT_SIZE(RenderingLimits);
 LLGL_STATIC_ASSERT_OFFSET(RenderingLimits, lineWidthRange);
@@ -1040,7 +1035,6 @@ LLGL_STATIC_ASSERT_OFFSET(SamplerDescriptor, ycbcrConversion);
 
 LLGL_STATIC_ASSERT_SIZE(YcbcrConversionDescriptor);
 LLGL_STATIC_ASSERT_OFFSET(YcbcrConversionDescriptor, format);
-LLGL_STATIC_ASSERT_OFFSET(YcbcrConversionDescriptor, externalFormat);
 LLGL_STATIC_ASSERT_OFFSET(YcbcrConversionDescriptor, model);
 LLGL_STATIC_ASSERT_OFFSET(YcbcrConversionDescriptor, range);
 LLGL_STATIC_ASSERT_OFFSET(YcbcrConversionDescriptor, xChromaOffset);
@@ -1048,17 +1042,6 @@ LLGL_STATIC_ASSERT_OFFSET(YcbcrConversionDescriptor, yChromaOffset);
 LLGL_STATIC_ASSERT_OFFSET(YcbcrConversionDescriptor, chromaFilter);
 LLGL_STATIC_ASSERT_OFFSET(YcbcrConversionDescriptor, swizzle);
 LLGL_STATIC_ASSERT_OFFSET(YcbcrConversionDescriptor, forceExplicitReconstruction);
-
-LLGL_STATIC_ASSERT_SIZE(ExternalImageDescriptor);
-LLGL_STATIC_ASSERT_OFFSET(ExternalImageDescriptor, type);
-LLGL_STATIC_ASSERT_OFFSET(ExternalImageDescriptor, handle);
-
-LLGL_STATIC_ASSERT_SIZE(ExternalImageProperties);
-LLGL_STATIC_ASSERT_OFFSET(ExternalImageProperties, extent);
-LLGL_STATIC_ASSERT_OFFSET(ExternalImageProperties, format);
-LLGL_STATIC_ASSERT_OFFSET(ExternalImageProperties, ycbcrConversion);
-LLGL_STATIC_ASSERT_OFFSET(ExternalImageProperties, requiresYcbcr);
-LLGL_STATIC_ASSERT_OFFSET(ExternalImageProperties, supportsLinearChromaFilter);
 
 LLGL_STATIC_ASSERT_SIZE(ResourceViewDescriptor);
 LLGL_STATIC_ASSERT_OFFSET(ResourceViewDescriptor, resource);

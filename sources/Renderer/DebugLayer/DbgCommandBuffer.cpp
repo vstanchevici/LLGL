@@ -2880,15 +2880,16 @@ void DbgCommandBuffer::AssertRecording()
 void DbgCommandBuffer::ValidateYcbcrTextureBinding(const DbgTexture& textureDbg, std::uint32_t descriptor)
 {
     const DbgPipelineLayout* pipelineLayoutDbg = (bindings_.pipelineState != nullptr ? bindings_.pipelineState->pipelineLayout : nullptr);
-    if (pipelineLayoutDbg == nullptr)
+    /* The Y'CbCr conversion of a native object is not known to the debug layer */
+    if (pipelineLayoutDbg == nullptr || textureDbg.hasNativeHandle)
         return;
 
     const bool isYcbcrSlot = (descriptor == pipelineLayoutDbg->ycbcrTextureDescriptor);
-    if (isYcbcrSlot && !textureDbg.hasYcbcrConversion && !textureDbg.isExternal)
+    if (isYcbcrSlot && !textureDbg.hasYcbcrConversion)
     {
         LLGL_DBG_ERROR(
             ErrorType::InvalidArgument,
-            "texture '%s' bound to descriptor[%u] must have a Y'CbCr conversion or be an external texture, "
+            "texture '%s' bound to descriptor[%u] must have a Y'CbCr conversion, "
             "since it is combined with a sampler binding with 'LLGL::BindFlags::SamplerYcbcrConversion'",
             GetLabelOrDefault(textureDbg.label, "LLGL::Texture"), descriptor
         );

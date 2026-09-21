@@ -11,6 +11,10 @@
 #include <cmath>
 #include <vector>
 
+#if LLGL_TESTBED_VULKAN_HEADERS
+#   include <LLGL/Backend/Vulkan/NativeHandle.h>
+#endif
+
 
 // Y'CbCr color with 8-bit components.
 struct YcbcrColor8
@@ -63,6 +67,8 @@ The framebuffer is split into three columns:
  - A: Narrow-range texture that is initialized on creation.
  - B: Narrow-range texture that is written via RenderSystem::WriteTexture().
  - C: Full-range texture, i.e. a different conversion, which requires another pipeline variant within the same render pass.
+ - D (Vulkan only): Placeholder texture and sampler that reference the native image, Y'CbCr conversion, and sampler of texture A
+   via Resource::SetNativeHandle without ownership, i.e. as if they had been created by the application.
 A uniform is set before any texture is bound, i.e. before the pipeline variant is known, and must still be applied to all draw calls.
 The framebuffer is read back and the center of each quadrant is compared against the expected RGB color of the BT.709 conversion.
 */
@@ -207,11 +213,55 @@ DEF_TEST( YcbcrTexture )
     texDesc.ycbcrConversion = &ycbcrFullDesc;
     CREATE_TEXTURE(texNV12_C, texDesc, "texNV12_C", &imageView);
 
+    // Wrap the native objects of texture A in a placeholder texture and sampler without ownership (Vulkan only)
+    Texture* texNative = nullptr;
+    Sampler* samplerNative = nullptr;
+
+    #if LLGL_TESTBED_VULKAN_HEADERS
+    if (renderer->GetRendererID() == RendererID::Vulkan)
+    {
+        Vulkan::ResourceNativeHandle texHandle = {};
+        if (!texNV12_A->GetNativeHandle(&texHandle, sizeof(texHandle)) || texHandle.image.ycbcrConversion == VK_NULL_HANDLE || texHandle.image.ycbcrSampler == VK_NULL_HANDLE)
+        {
+            Log::Errorf("Failed to get native Vulkan image with Y'CbCr conversion from NV12 texture\n");
+            return TestResult::FailedErrors;
+        }
+
+        TextureDescriptor placeholderDesc;
+        {
+            placeholderDesc.type        = TextureType::Texture2D;
+            placeholderDesc.bindFlags   = BindFlags::Sampled;
+            placeholderDesc.format      = Format::RGBA8UNorm;
+            placeholderDesc.extent      = Extent3D{ 1, 1, 1 };
+            placeholderDesc.mipLevels   = 1;
+            placeholderDesc.miscFlags   = MiscFlags::NoInitialData;
+        }
+        CREATE_TEXTURE(texPlaceholder, placeholderDesc, "texNativeNV12", nullptr);
+        texNative = texPlaceholder;
+
+        if (!texNative->SetNativeHandle(&texHandle, sizeof(texHandle), /*own:*/ false))
+        {
+            Log::Errorf("Failed to set native Vulkan image with Y'CbCr conversion\n");
+            return TestResult::FailedErrors;
+        }
+
+        Vulkan::ResourceNativeHandle samplerHandle = {};
+        samplerNative = renderer->CreateSampler(SamplerDescriptor{});
+        if (!ycbcrNarrowSampler->GetNativeHandle(&samplerHandle, sizeof(samplerHandle)) ||
+            !samplerNative->SetNativeHandle(&samplerHandle, sizeof(samplerHandle), /*own:*/ false))
+        {
+            Log::Errorf("Failed to set native Vulkan sampler with Y'CbCr conversion\n");
+            return TestResult::FailedErrors;
+        }
+    }
+    #endif // /LLGL_TESTBED_VULKAN_HEADERS
+
     // Render all textures side by side; the conversion of each texture selects the pipeline variant
     Texture* readbackTex = nullptr;
 
+    const std::uint32_t numColumns = (texNative != nullptr ? 4 : 3);
     const Extent2D resolution = swapChain->GetResolution();
-    const Extent2D columnResolution{ resolution.width / 3, resolution.height };
+    const Extent2D columnResolution{ resolution.width / numColumns, resolution.height };
 
     struct Column
     {
@@ -221,11 +271,12 @@ DEF_TEST( YcbcrTexture )
         const char* name;
     };
 
-    const Column columns[3] =
+    const Column columns[4] =
     {
         { texNV12_A, ycbcrNarrowSampler, YcbcrRange::Narrow, "A" },
         { texNV12_B, nullptr,            YcbcrRange::Narrow, "B" },
         { texNV12_C, nullptr,            YcbcrRange::Full,   "C" },
+        { texNative, samplerNative,      YcbcrRange::Narrow, "D" },
     };
 
     BEGIN();
@@ -240,7 +291,7 @@ DEF_TEST( YcbcrTexture )
             const float colorScale[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
             cmdBuffer->SetUniforms(0, colorScale, sizeof(colorScale));
 
-            for (std::uint32_t i = 0; i < 3; ++i)
+            for (std::uint32_t i = 0; i < numColumns; ++i)
             {
                 cmdBuffer->SetViewport(Viewport{ Offset2D{ static_cast<std::int32_t>(i * columnResolution.width), 0 }, columnResolution });
                 cmdBuffer->SetResource(0, *columns[i].texture);
@@ -277,7 +328,7 @@ DEF_TEST( YcbcrTexture )
 
     TestResult result = TestResult::Passed;
 
-    for (std::uint32_t column = 0; column < 3; ++column)
+    for (std::uint32_t column = 0; column < numColumns; ++column)
     {
         for (std::uint32_t quadrant = 0; quadrant < 4; ++quadrant)
         {
@@ -306,7 +357,11 @@ DEF_TEST( YcbcrTexture )
         }
     }
 
-    // Clear resources
+    // Clear resources; the native wrappers must be released first, since they only reference the native objects of texture A
+    if (texNative != nullptr)
+        renderer->Release(*texNative);
+    if (samplerNative != nullptr)
+        renderer->Release(*samplerNative);
     renderer->Release(*texNV12_A);
     renderer->Release(*texNV12_B);
     renderer->Release(*texNV12_C);

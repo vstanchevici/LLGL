@@ -30,6 +30,8 @@ class DbgTexture final : public Texture
 
         void SetDebugName(const char* name) override;
 
+        bool SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize, bool own = false) override;
+
     public:
 
         DbgTexture(Texture& instance, const TextureDescriptor& desc);
@@ -39,14 +41,14 @@ class DbgTexture final : public Texture
     public:
 
         Texture&                instance;
-        const TextureDescriptor     desc;                           // Copy of the descriptor without the external and ycbcrConversion pointers.
+        const TextureDescriptor     desc;                           // Copy of the descriptor without the ycbcrConversion pointer.
         TextureViewDescriptor       viewDesc;
         std::uint32_t               mipLevels           = 1;        // Actual number of MIP-map levels.
         std::string                 label;
         const bool                  isTextureView       = false;
-        const bool                  isExternal          = false;    // Texture was created with TextureDescriptor::external.
         const bool                  hasYcbcrConversion  = false;    // Texture was created with TextureDescriptor::ycbcrConversion.
         YcbcrConversionDescriptor   ycbcrConversion;                // Copy of TextureDescriptor::ycbcrConversion if hasYcbcrConversion is true.
+        bool                        hasNativeHandle     = false;    // A native handle was set, so the descriptor may not describe the native object anymore (see SetNativeHandle).
 
     private:
 

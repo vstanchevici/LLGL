@@ -49,8 +49,6 @@ class VKTexture final : public Texture
             VKYcbcrConversionPool*      ycbcrConversionPool = nullptr
         );
 
-        ~VKTexture();
-
     public:
 
         void SetDebugName(const char* name) override;
@@ -98,11 +96,6 @@ class VKTexture final : public Texture
             return image_.GetVkImage();
         }
 
-        // Set the Vulkan image object.
-        inline void SetVkImage(VkImage image)
-        {
-            image_.SetVkImage(image);
-        }
 
         // Returns the native VkImageLayout state of this image.
         inline VkImageLayout GetVkImageLayout() const
@@ -201,7 +194,7 @@ class VKTexture final : public Texture
         }
 
 
-        void SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize) override;
+        bool SetNativeHandle(void* nativeHandle, std::size_t nativeHandleSize, bool own = false) override;
 
 
         // Overrides the image layout. This is not called a setter to indicate that this should only be called
@@ -226,21 +219,9 @@ class VKTexture final : public Texture
         // Returns true if this texture has a multi-planar format, e.g. VK_FORMAT_G8_B8R8_2PLANE_420_UNORM.
         bool IsMultiPlanar() const;
 
-        // Returns true if this texture was created from an external image (see TextureDescriptor::external).
-        inline bool IsExternal() const
-        {
-            return isExternal_;
-        }
-
     private:
 
         void CreateImage(VkDevice device, const TextureDescriptor& desc);
-
-        // Imports the external image and allocates dedicated memory for it (see TextureDescriptor::external).
-        void CreateExternalImage(VkDevice device, const TextureDescriptor& desc, VKYcbcrConversionPool* ycbcrConversionPool);
-
-        // Releases the reference to the external image handle.
-        void ReleaseExternalHandle();
 
         // Initializes the Y'CbCr conversion info structure to be chained into image view create infos. Returns null if this texture has no conversion.
         const void* GetYcbcrConversionInfo(VkSamplerYcbcrConversionInfo& outInfo) const;
@@ -248,10 +229,9 @@ class VKTexture final : public Texture
     private:
 
         VkDevice                device_             = VK_NULL_HANDLE;
+        VKYcbcrConversionPool*  ycbcrConversionPool_    = nullptr;
         VKYcbcrConversionSPtr   ycbcrConversion_;                           // Must outlive the image views
-        VKPtr<VkDeviceMemory>   externalMemory_;                            // Dedicated memory for external images; must outlive the image
-        void*                   externalHandle_     = nullptr;              // Reference to the external image handle, e.g. AHardwareBuffer*
-        bool                    isExternal_         = false;
+        VKPtr<VkDeviceMemory>   nativeMemory_;                              // Memory of a native image that is owned by this texture (see SetNativeHandle); must outlive the image
         VKDeviceImage           image_;
         VKPtr<VkImageView>      imageView_;
 

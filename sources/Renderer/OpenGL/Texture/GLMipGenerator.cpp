@@ -39,7 +39,7 @@ void GLMipGenerator::GenerateMips(const TextureType type)
 void GLMipGenerator::GenerateMipsForTexture(GLStateManager& stateMngr, GLTexture& textureGL)
 {
     /* External textures have no MIP-maps */
-    if (textureGL.IsExternal())
+    if (textureGL.GetGLTextureTarget() == GLTextureTarget::TextureExternalOES)
         return;
     GenerateMipsPrimary(stateMngr, textureGL.GetID(), textureGL.GetType());
 }
@@ -54,7 +54,7 @@ void GLMipGenerator::GenerateMipsRangeForTexture(
     std::uint32_t   numArrayLayers)
 {
     /* External textures have no MIP-maps */
-    if (textureGL.IsExternal())
+    if (textureGL.GetGLTextureTarget() == GLTextureTarget::TextureExternalOES)
         return;
 
     if (numMipLevels > 0 && numArrayLayers > 0)
