@@ -109,6 +109,14 @@ void VKPipelineLayoutPermutation::CreateBindingSetLayout(
 {
     outSetLayout.Initialize(device, std::move(setLayoutBindings));
     outSetLayout.GetLayoutBindings(outBindings);
+
+    /* Insert virtual bindings of the owner at the same positions, so descriptor indices remain the same (see VKPipelineLayout::InsertYcbcrVirtualBinding) */
+    for_range(i, inBindings.size())
+    {
+        if (inBindings[i].descriptorType == VK_DESCRIPTOR_TYPE_MAX_ENUM && i <= outBindings.size())
+            outBindings.insert(outBindings.begin() + i, inBindings[i]);
+    }
+
     LLGL_ASSERT(inBindings.size() == outBindings.size());
     for_range(i, inBindings.size())
         outBindings[i].barrierSlot = inBindings[i].barrierSlot;

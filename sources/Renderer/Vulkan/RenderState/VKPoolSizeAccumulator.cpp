@@ -28,6 +28,10 @@ static constexpr std::uint32_t g_maxCombinedImageSamplerDescriptorCount = 3;
 
 void VKPoolSizeAccumulator::Accumulate(VkDescriptorType type, std::uint32_t count)
 {
+    /* Ignore virtual bindings, e.g. the sampler of a combined texture-sampler with Y'CbCr conversion */
+    if (type == VK_DESCRIPTOR_TYPE_MAX_ENUM)
+        return;
+
     const std::uint32_t poolIndex = GetPoolIndex(type);
     if (type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
         count *= g_maxCombinedImageSamplerDescriptorCount;

@@ -160,12 +160,58 @@ VKYcbcrConversion::VKYcbcrConversion(
 
     VkResult result = vkCreateSamplerYcbcrConversionKHR(device, &createInfo, nullptr, &conversion_);
     VKThrowIfCreateFailed(result, "VkSamplerYcbcrConversion");
+
+    CreateCanonicalSampler(hasKnownFormatFeatures && (formatFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0);
 }
 
 VKYcbcrConversion::~VKYcbcrConversion()
 {
+    if (canonicalSampler_ != VK_NULL_HANDLE)
+        vkDestroySampler(device_, canonicalSampler_, nullptr);
     if (conversion_ != VK_NULL_HANDLE)
         vkDestroySamplerYcbcrConversionKHR(device_, conversion_, nullptr);
+}
+
+void VKYcbcrConversion::CreateCanonicalSampler(bool supportsLinearFilter)
+{
+    /* Chain Y'CbCr conversion into sampler */
+    VkSamplerYcbcrConversionInfo conversionInfo;
+    {
+        conversionInfo.sType        = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_INFO;
+        conversionInfo.pNext        = nullptr;
+        conversionInfo.conversion   = conversion_;
+    }
+
+    /*
+    Min/mag filters must equal the chroma filter unless the format supports separate reconstruction filters.
+    All other attributes are restricted for samplers with Y'CbCr conversion:
+    see https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkSamplerCreateInfo.html
+    */
+    const VkFilter filter = (hasSeparateReconstructionFilter_ && supportsLinearFilter ? VK_FILTER_LINEAR : chromaFilter_);
+
+    VkSamplerCreateInfo createInfo;
+    {
+        createInfo.sType                    = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        createInfo.pNext                    = &conversionInfo;
+        createInfo.flags                    = 0;
+        createInfo.magFilter                = filter;
+        createInfo.minFilter                = filter;
+        createInfo.mipmapMode               = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        createInfo.addressModeU             = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        createInfo.addressModeV             = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        createInfo.addressModeW             = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        createInfo.mipLodBias               = 0.0f;
+        createInfo.anisotropyEnable         = VK_FALSE;
+        createInfo.maxAnisotropy            = 1.0f;
+        createInfo.compareEnable            = VK_FALSE;
+        createInfo.compareOp                = VK_COMPARE_OP_NEVER;
+        createInfo.minLod                   = 0.0f;
+        createInfo.maxLod                   = 0.0f;
+        createInfo.borderColor              = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+        createInfo.unnormalizedCoordinates  = VK_FALSE;
+    }
+    VkResult result = vkCreateSampler(device_, &createInfo, nullptr, &canonicalSampler_);
+    VKThrowIfCreateFailed(result, "VkSampler");
 }
 
 

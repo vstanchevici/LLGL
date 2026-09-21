@@ -10,6 +10,7 @@
 
 
 #include "VKPipelineState.h"
+#include <string>
 
 
 namespace LLGL
@@ -30,6 +31,10 @@ class VKComputePSO final : public VKPipelineState
             PipelineCache*                      pipelineCache = nullptr
         );
 
+    protected:
+
+        bool CreateVkPipelineVariant(VkPipelineLayout pipelineLayout, VKPtr<VkPipeline>& outPipeline) override;
+
     private:
 
         bool CreateVkPipeline(
@@ -37,6 +42,13 @@ class VKComputePSO final : public VKPipelineState
             const ComputePipelineDescriptor&    desc,
             VkPipelineCache                     pipelineCache = VK_NULL_HANDLE
         );
+
+    private:
+
+        // Native create info for pipeline variants (see VKPipelineState::HasYcbcrVariants).
+        VKPtr<VkShaderModule>       variantShaderModule_;
+        std::string                 variantEntryPoint_;
+        VkComputePipelineCreateInfo variantCreateInfo_      = {};
 
 };
 

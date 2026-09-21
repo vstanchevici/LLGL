@@ -60,9 +60,9 @@ bool VKComputePSO::CreateVkPipeline(
         return false;
     }
 
-    /* Get shader stages */
+    /* Get shader stages; pipeline variants need their own shader module, since they are created after the shader might have been released */
     VkPipelineShaderStageCreateInfo shaderStageCreateInfo;
-    GetShaderCreateInfoAndOptionalPermutation(*computeShaderVK, shaderStageCreateInfo);
+    GetShaderCreateInfoAndOptionalPermutation(*computeShaderVK, shaderStageCreateInfo, (HasYcbcrVariants() ? &variantShaderModule_ : nullptr));
 
     /* Create graphics pipeline state object */
     VkComputePipelineCreateInfo createInfo;
@@ -75,8 +75,32 @@ bool VKComputePSO::CreateVkPipeline(
         createInfo.basePipelineHandle   = VK_NULL_HANDLE;
         createInfo.basePipelineIndex    = 0;
     }
+
+    if (HasYcbcrVariants())
+    {
+        /* Keep create info for pipeline variants that are created when a texture with Y'CbCr conversion is bound */
+        variantEntryPoint_              = createInfo.stage.pName;
+        variantCreateInfo_              = createInfo;
+        variantCreateInfo_.stage.pName  = variantEntryPoint_.c_str();
+        return true;
+    }
+
     VkResult result = vkCreateComputePipelines(device, pipelineCache, 1, &createInfo, nullptr, ReleaseAndGetAddressOfVkPipeline());
     VKThrowIfFailed(result, "failed to create Vulkan compute pipeline");
+
+    return true;
+}
+
+bool VKComputePSO::CreateVkPipelineVariant(VkPipelineLayout pipelineLayout, VKPtr<VkPipeline>& outPipeline)
+{
+    if (variantShaderModule_.Get() == VK_NULL_HANDLE)
+        return false;
+
+    VkComputePipelineCreateInfo createInfo = variantCreateInfo_;
+    createInfo.layout = pipelineLayout;
+
+    VkResult result = vkCreateComputePipelines(GetVkDevice(), VK_NULL_HANDLE, 1, &createInfo, nullptr, outPipeline.ReleaseAndGetAddressOf());
+    VKThrowIfFailed(result, "failed to create Vulkan compute pipeline variant for Y'CbCr conversion");
 
     return true;
 }

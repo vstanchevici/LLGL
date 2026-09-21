@@ -174,6 +174,25 @@ struct BindFlags
         \todo This is a workaround for the Vulkan backend and should eventually be removed.
         */
         TexelBuffer             = (1 << 12),
+
+        /**
+        \brief Specifies a sampler binding that is combined with a texture that has a Y'CbCr conversion.
+        \remarks This can only be used for a Sampler binding in PipelineLayoutDescriptor::bindings (not \c heapBindings or \c staticSamplers).
+        The sampler binding must be referenced by exactly one entry in PipelineLayoutDescriptor::combinedTextureSamplers
+        and a pipeline layout can have at most one such binding.
+        \remarks The resources are bound as usual with CommandBuffer::SetResource. The texture that is bound to the combined texture binding
+        must have a Y'CbCr conversion (see TextureDescriptor::ycbcrConversion) or be an external texture (see TextureDescriptor::external).
+        Binding the sampler is optional, since the backend derives the sampler from the Y'CbCr conversion of the texture.
+        If a sampler is bound, it must have the same conversion as the texture (see SamplerDescriptor::ycbcrConversion).
+        \remarks With Vulkan, the pipeline state is resolved when the texture is bound, so the texture must be bound before any draw or dispatch command.
+        A different conversion (e.g. when the format of a video stream changes) creates a new native pipeline once and caches it.
+        Therefore, the render pass of such a graphics pipeline (see GraphicsPipelineDescriptor::renderPass) must not be released before the pipeline state.
+        \remarks External textures are acquired from and released to their external producer implicitly when a command buffer is submitted.
+        \note Only supported with: Vulkan, OpenGLES.
+        \see SamplerDescriptor::ycbcrConversion
+        \see PipelineLayoutDescriptor::combinedTextureSamplers
+        */
+        SamplerYcbcrConversion  = (1 << 13),
     };
 };
 

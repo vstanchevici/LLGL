@@ -516,33 +516,6 @@ class LLGL_EXPORT CommandBuffer : public RenderSystemChild
             Texture* const *    textures
         ) = 0;
 
-        /**
-        \brief Acquires ownership of the specified external texture for this command buffer's queue.
-        \param[in] texture Specifies the texture that was created with an external image (see TextureDescriptor::external).
-        \param[in] nativeFence Specifies an optional native fence that must be signaled before the texture is accessed.
-        For Android, this is a sync file descriptor (e.g. from <code>AImage_getHardwareBufferWithFence</code> or <code>AImageReader_acquireNextImageAsync</code>).
-        Ownership of the fence is transferred to LLGL, i.e. the caller must not close the file descriptor. By default -1, i.e. no fence.
-        \remarks This must be recorded outside of a render pass and before the texture is accessed by any shader in this command buffer.
-        After the texture has been accessed, it must be released with ReleaseExternalTexture.
-        If this is recorded inside a render pass, the command is ignored and an error is reported,
-        because splitting the render pass would store and load all attachments, which is expensive on tile-based GPUs.
-        \remarks The fence is consumed when this command buffer is submitted for the first time.
-        Therefore, a command buffer that acquires external textures with a fence must be recorded again for each submission,
-        i.e. it must not be created with the CommandBufferFlags::MultiSubmit flag.
-        \note Only supported with: Vulkan, OpenGLES.
-        \see ReleaseExternalTexture
-        */
-        virtual void AcquireExternalTexture(Texture& texture, long long nativeFence = -1);
-
-        /**
-        \brief Releases ownership of the specified external texture back to its external producer.
-        \remarks This must be recorded outside of a render pass after the last access to the texture in this command buffer.
-        If this is recorded inside a render pass, the command is ignored and an error is reported (see AcquireExternalTexture).
-        \note Only supported with: Vulkan, OpenGLES.
-        \see AcquireExternalTexture
-        */
-        virtual void ReleaseExternalTexture(Texture& texture);
-
         /* ----- Render Passes ----- */
 
         /**

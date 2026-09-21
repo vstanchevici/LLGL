@@ -153,6 +153,11 @@ VKPtr<VkShaderModule> VKShader::CreateVkShaderModulePermutation(const Permutatio
     return VK_NULL_HANDLE;
 }
 
+VKPtr<VkShaderModule> VKShader::CreateVkShaderModuleCopy() const
+{
+    return CreateVkShaderModule(device_, shaderCode_);
+}
+
 #if LLGL_VK_ENABLE_SPIRV_REFLECT
 
 static const char* GetOptString(const char* s)

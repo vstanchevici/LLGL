@@ -15,6 +15,7 @@
 #include "../VKCore.h"
 #include "../../CheckedCast.h"
 #include "../../PipelineStateUtils.h"
+#include "../../../Core/CoreUtils.h"
 #include <cstddef>
 #include <LLGL/PipelineStateFlags.h>
 #include <LLGL/Utils/ForRange.h>
@@ -293,12 +294,42 @@ static void CreateDynamicState(
     createInfo.pDynamicStates       = (dynamicStatesVK.empty() ? nullptr : dynamicStatesVK.data());
 }
 
-bool VKGraphicsPSO::CreateVkPipeline(
-    VkDevice                            device,
+// Deep copy of the native create info of a graphics pipeline, so Y'CbCr variants can be created after the PSO descriptor is gone.
+struct VKGraphicsPSO::CreateInfoStorage
+{
+    SmallVector<VkPipelineShaderStageCreateInfo, 5>         shaderStages;
+    VKPtr<VkShaderModule>                                   shaderModules[5];   // Only owned for PSOs with Y'CbCr variants
+    std::string                                             entryPoints[5];
+    std::vector<VkVertexInputBindingDescription>            vertexBindings;
+    std::vector<VkVertexInputAttributeDescription>          vertexAttribs;
+    VkPipelineVertexInputStateCreateInfo                    vertexInputState;
+    VkPipelineInputAssemblyStateCreateInfo                  inputAssemblyState;
+    VkPipelineTessellationStateCreateInfo                   tessellationState;
+    std::vector<VkViewport>                                 viewports;
+    std::vector<VkRect2D>                                   scissors;
+    VkPipelineViewportStateCreateInfo                       viewportState;
+    VkPipelineRasterizationStateCreateInfo                  rasterizerState;
+    VkPipelineRasterizationConservativeStateCreateInfoEXT   conservativeRasterState;
+    VkSampleMask                                            sampleMask;
+    VkPipelineMultisampleStateCreateInfo                    multisampleState;
+    VkPipelineDepthStencilStateCreateInfo                   depthStencilState;
+    std::vector<VkPipelineColorBlendAttachmentState>        blendAttachments;
+    VkPipelineColorBlendStateCreateInfo                     colorBlendState;
+    std::vector<VkDynamicState>                             dynamicStates;
+    VkPipelineDynamicStateCreateInfo                        dynamicState;
+    VkGraphicsPipelineCreateInfo                            createInfo;
+};
+
+VKGraphicsPSO::~VKGraphicsPSO()
+{
+    // dummy; required for std::unique_ptr of incomplete type
+}
+
+bool VKGraphicsPSO::FillCreateInfoStorage(
+    CreateInfoStorage&                  storage,
     const VKRenderPass&                 renderPass,
     const VKGraphicsPipelineLimits&     limits,
-    const GraphicsPipelineDescriptor&   desc,
-    VkPipelineCache                     pipelineCache)
+    const GraphicsPipelineDescriptor&   desc)
 {
     /* Get shader program object */
     const VKShader* vertexShaderVK = LLGL_CAST(const VKShader*, desc.vertexShader);
@@ -308,10 +339,10 @@ bool VKGraphicsPSO::CreateVkPipeline(
         return false;
     }
 
-    auto FillAndAppendShaderStageCreateInfo = [this, &desc](
-        Shader*                                             shader,
-        SmallVector<VkPipelineShaderStageCreateInfo, 5>&    createInfos,
-        bool&                                               outShaderCreationFailed)
+    /* Pipeline variants are created after the shaders might have been released, so they need their own shader modules and entry point names */
+    const bool ownsShaderModules = HasYcbcrVariants();
+
+    auto FillAndAppendShaderStageCreateInfo = [this, &desc, &storage, ownsShaderModules](Shader* shader, bool& outShaderCreationFailed)
     {
         if (shader != nullptr)
         {
@@ -324,91 +355,134 @@ bool VKGraphicsPSO::CreateVkPipeline(
             }
             else
             {
-                const std::size_t shaderIndex = createInfos.size();
-                createInfos.resize(shaderIndex + 1);
-                this->GetShaderCreateInfoAndOptionalPermutation(shaderVK, createInfos.back());
+                const std::size_t shaderIndex = storage.shaderStages.size();
+                storage.shaderStages.resize(shaderIndex + 1);
+                VkPipelineShaderStageCreateInfo& stage = storage.shaderStages.back();
+                this->GetShaderCreateInfoAndOptionalPermutation(shaderVK, stage, (ownsShaderModules ? &(storage.shaderModules[shaderIndex]) : nullptr));
+                storage.entryPoints[shaderIndex] = stage.pName;
+                stage.pName = storage.entryPoints[shaderIndex].c_str();
             }
         }
     };
 
     /* Get shader stages */
-    SmallVector<VkPipelineShaderStageCreateInfo, 5> shaderStageCreateInfos;
     bool shaderCreationFailed = false;
-    FillAndAppendShaderStageCreateInfo(desc.vertexShader,           shaderStageCreateInfos, shaderCreationFailed);
-    FillAndAppendShaderStageCreateInfo(desc.tessControlShader,      shaderStageCreateInfos, shaderCreationFailed);
-    FillAndAppendShaderStageCreateInfo(desc.tessEvaluationShader,   shaderStageCreateInfos, shaderCreationFailed);
-    FillAndAppendShaderStageCreateInfo(desc.geometryShader,         shaderStageCreateInfos, shaderCreationFailed);
-    FillAndAppendShaderStageCreateInfo(desc.fragmentShader,         shaderStageCreateInfos, shaderCreationFailed);
+    FillAndAppendShaderStageCreateInfo(desc.vertexShader,           shaderCreationFailed);
+    FillAndAppendShaderStageCreateInfo(desc.tessControlShader,      shaderCreationFailed);
+    FillAndAppendShaderStageCreateInfo(desc.tessEvaluationShader,   shaderCreationFailed);
+    FillAndAppendShaderStageCreateInfo(desc.geometryShader,         shaderCreationFailed);
+    FillAndAppendShaderStageCreateInfo(desc.fragmentShader,         shaderCreationFailed);
     if (shaderCreationFailed)
         return false;
 
-    /* Initialize vertex input descriptor */
-    VkPipelineVertexInputStateCreateInfo vertexInputCreateInfo;
-    vertexShaderVK->FillVertexInputStateCreateInfo(vertexInputCreateInfo);
+    /* Initialize vertex input descriptor and copy its arrays, since they are owned by the vertex shader */
+    vertexShaderVK->FillVertexInputStateCreateInfo(storage.vertexInputState);
+    {
+        const VkPipelineVertexInputStateCreateInfo& vertexInput = storage.vertexInputState;
+        storage.vertexBindings.assign(vertexInput.pVertexBindingDescriptions, vertexInput.pVertexBindingDescriptions + vertexInput.vertexBindingDescriptionCount);
+        storage.vertexAttribs.assign(vertexInput.pVertexAttributeDescriptions, vertexInput.pVertexAttributeDescriptions + vertexInput.vertexAttributeDescriptionCount);
+        storage.vertexInputState.pVertexBindingDescriptions     = (storage.vertexBindings.empty() ? nullptr : storage.vertexBindings.data());
+        storage.vertexInputState.pVertexAttributeDescriptions   = (storage.vertexAttribs.empty() ? nullptr : storage.vertexAttribs.data());
+    }
 
     /* Initialize input assembly state */
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly;
-    CreateInputAssemblyState(desc, inputAssembly);
+    CreateInputAssemblyState(desc, storage.inputAssemblyState);
 
     /* Initialize tessellation state */
-    VkPipelineTessellationStateCreateInfo tessellationState;
-    CreateTessellationState(desc, tessellationState);
+    CreateTessellationState(desc, storage.tessellationState);
 
     /* Initialize viewport state */
-    std::vector<VkViewport> viewportsVK;
-    std::vector<VkRect2D> scissorsVK;
-    VkPipelineViewportStateCreateInfo viewportState;
-    CreateViewportState(desc, viewportState, viewportsVK, scissorsVK);
+    CreateViewportState(desc, storage.viewportState, storage.viewports, storage.scissors);
 
     /* Initialize rasterizer state */
-    VkPipelineRasterizationStateCreateInfo rasterizerState;
-    VkPipelineRasterizationConservativeStateCreateInfoEXT createInfoConservativeRasterExt;
-    CreateRasterizerState(desc.rasterizer, limits, rasterizerState, createInfoConservativeRasterExt);
+    CreateRasterizerState(desc.rasterizer, limits, storage.rasterizerState, storage.conservativeRasterState);
 
-    /* Initialize multi-sample state */
-    VkPipelineMultisampleStateCreateInfo multisampleState;
+    /* Initialize multi-sample state and copy sample mask, since it is owned by the descriptor */
     const VkSampleCountFlagBits sampleCountBits = (desc.rasterizer.multiSampleEnabled ? renderPass.GetSampleCountBits() : VK_SAMPLE_COUNT_1_BIT);
-    CreateMultisampleState(sampleCountBits, desc.blend, multisampleState);
+    CreateMultisampleState(sampleCountBits, desc.blend, storage.multisampleState);
+    storage.sampleMask = static_cast<VkSampleMask>(desc.blend.sampleMask);
+    storage.multisampleState.pSampleMask = &(storage.sampleMask);
 
     /* Initialize depth-stencil state */
-    VkPipelineDepthStencilStateCreateInfo depthStencilState;
-    CreateDepthStencilState(desc, depthStencilState);
+    CreateDepthStencilState(desc, storage.depthStencilState);
 
     /* Initialize color-blend state */
-    std::vector<VkPipelineColorBlendAttachmentState> attachmentStatesVK;
-    VkPipelineColorBlendStateCreateInfo colorBlendState;
-    CreateColorBlendState(desc.blend, colorBlendState, attachmentStatesVK, renderPass.GetNumColorAttachments());
+    CreateColorBlendState(desc.blend, storage.colorBlendState, storage.blendAttachments, renderPass.GetNumColorAttachments());
 
     /* Initialize dynamic state */
-    std::vector<VkDynamicState> dynamicStatesVK;
-    VkPipelineDynamicStateCreateInfo dynamicState;
-    CreateDynamicState(desc, dynamicState, dynamicStatesVK);
+    CreateDynamicState(desc, storage.dynamicState, storage.dynamicStates);
 
-    /* Create graphics pipeline state object */
-    VkGraphicsPipelineCreateInfo createInfo;
+    /* Initialize graphics pipeline state object; the layout is specified by the caller */
+    VkGraphicsPipelineCreateInfo& createInfo = storage.createInfo;
     {
         createInfo.sType                = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
         createInfo.pNext                = nullptr;
         createInfo.flags                = 0;
-        createInfo.stageCount           = static_cast<std::uint32_t>(shaderStageCreateInfos.size());
-        createInfo.pStages              = shaderStageCreateInfos.data();
-        createInfo.pVertexInputState    = (&vertexInputCreateInfo);
-        createInfo.pInputAssemblyState  = (&inputAssembly);
-        createInfo.pTessellationState   = (inputAssembly.topology == VK_PRIMITIVE_TOPOLOGY_PATCH_LIST ? &tessellationState : nullptr);
-        createInfo.pViewportState       = (&viewportState);
-        createInfo.pRasterizationState  = (&rasterizerState);
-        createInfo.pMultisampleState    = (&multisampleState);
-        createInfo.pDepthStencilState   = (&depthStencilState);
-        createInfo.pColorBlendState     = (&colorBlendState);
-        createInfo.pDynamicState        = (!dynamicStatesVK.empty() ? &dynamicState : nullptr);
-        createInfo.layout               = GetVkPipelineLayout();
+        createInfo.stageCount           = static_cast<std::uint32_t>(storage.shaderStages.size());
+        createInfo.pStages              = storage.shaderStages.data();
+        createInfo.pVertexInputState    = &(storage.vertexInputState);
+        createInfo.pInputAssemblyState  = &(storage.inputAssemblyState);
+        createInfo.pTessellationState   = (storage.inputAssemblyState.topology == VK_PRIMITIVE_TOPOLOGY_PATCH_LIST ? &(storage.tessellationState) : nullptr);
+        createInfo.pViewportState       = &(storage.viewportState);
+        createInfo.pRasterizationState  = &(storage.rasterizerState);
+        createInfo.pMultisampleState    = &(storage.multisampleState);
+        createInfo.pDepthStencilState   = &(storage.depthStencilState);
+        createInfo.pColorBlendState     = &(storage.colorBlendState);
+        createInfo.pDynamicState        = (!storage.dynamicStates.empty() ? &(storage.dynamicState) : nullptr);
+        createInfo.layout               = VK_NULL_HANDLE;
         createInfo.renderPass           = renderPass.GetVkRenderPass();
         createInfo.subpass              = 0;
         createInfo.basePipelineHandle   = VK_NULL_HANDLE;
         createInfo.basePipelineIndex    = 0;
     }
-    VkResult result = vkCreateGraphicsPipelines(device, pipelineCache, 1, &createInfo, nullptr, ReleaseAndGetAddressOfVkPipeline());
+
+    return true;
+}
+
+bool VKGraphicsPSO::CreateVkPipeline(
+    VkDevice                            device,
+    const VKRenderPass&                 renderPass,
+    const VKGraphicsPipelineLimits&     limits,
+    const GraphicsPipelineDescriptor&   desc,
+    VkPipelineCache                     pipelineCache)
+{
+    /* Storage must not be moved after it has been filled, since the create info refers to its members */
+    auto storage = MakeUnique<CreateInfoStorage>();
+    if (!FillCreateInfoStorage(*storage, renderPass, limits, desc))
+        return false;
+
+    if (HasYcbcrVariants())
+    {
+        /* Keep create info for pipeline variants that are created when a texture with Y'CbCr conversion is bound */
+        renderPass_         = &renderPass;
+        createInfoStorage_  = std::move(storage);
+        return true;
+    }
+
+    /* Create graphics pipeline state object */
+    storage->createInfo.layout = GetVkPipelineLayout();
+    VkResult result = vkCreateGraphicsPipelines(device, pipelineCache, 1, &(storage->createInfo), nullptr, ReleaseAndGetAddressOfVkPipeline());
     VKThrowIfFailed(result, "failed to create Vulkan graphics pipeline");
+
+    return true;
+}
+
+bool VKGraphicsPSO::CreateVkPipelineVariant(VkPipelineLayout pipelineLayout, VKPtr<VkPipeline>& outPipeline)
+{
+    if (!createInfoStorage_ || renderPass_ == nullptr)
+        return false;
+
+    /*
+    Variants only differ in their layout (i.e. the immutable Y'CbCr sampler). The render pass is queried again,
+    since the native render pass of a swap-chain is re-created when the swap-chain is resized.
+    */
+    VkGraphicsPipelineCreateInfo createInfo = createInfoStorage_->createInfo;
+    {
+        createInfo.layout       = pipelineLayout;
+        createInfo.renderPass   = renderPass_->GetVkRenderPass();
+    }
+    VkResult result = vkCreateGraphicsPipelines(GetVkDevice(), VK_NULL_HANDLE, 1, &createInfo, nullptr, outPipeline.ReleaseAndGetAddressOf());
+    VKThrowIfFailed(result, "failed to create Vulkan graphics pipeline variant for Y'CbCr conversion");
 
     return true;
 }

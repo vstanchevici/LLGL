@@ -984,6 +984,7 @@ typedef enum LLGLBindFlags
     LLGLBindCopySrc                = (1 << 10),
     LLGLBindCopyDst                = (1 << 11),
     LLGLBindTexelBuffer            = (1 << 12),
+    LLGLBindSamplerYcbcrConversion = (1 << 13),
 }
 LLGLBindFlags;
 
@@ -1457,7 +1458,6 @@ typedef struct LLGLBindingDescriptor
     long             stageFlags;       /* = 0 */
     LLGLBindingSlot  slot;
     uint32_t         arraySize;        /* = 0 */
-    LLGLSampler      immutableSampler; /* = LLGL_NULL_OBJECT */
 }
 LLGLBindingDescriptor;
 

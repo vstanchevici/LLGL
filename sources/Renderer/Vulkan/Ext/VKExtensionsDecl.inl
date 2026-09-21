@@ -84,12 +84,6 @@ DECL_VKPROC( vkGetPhysicalDeviceSparseImageFormatProperties2KHR );
 DECL_VKPROC( vkCreateSamplerYcbcrConversionKHR  );
 DECL_VKPROC( vkDestroySamplerYcbcrConversionKHR );
 
-/* VK_KHR_external_semaphore_fd */
-
-#if VK_KHR_external_semaphore_fd
-DECL_VKPROC( vkImportSemaphoreFdKHR );
-#endif
-
 /* VK_ANDROID_external_memory_android_hardware_buffer */
 
 #if VK_ANDROID_external_memory_android_hardware_buffer

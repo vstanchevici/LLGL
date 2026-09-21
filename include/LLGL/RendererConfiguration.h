@@ -118,7 +118,7 @@ struct RendererConfigurationVulkan
     e.g. when the logical device was created by an OpenXR runtime via \c xrCreateVulkanDeviceKHR.
     LLGL cannot enable any extensions for such a device, so it only uses the extensions listed here. The strings are only read during the creation of the render system.
     \remarks For example, the following extensions are required for external Android hardware buffers with Vulkan 1.1:
-    \c VK_ANDROID_external_memory_android_hardware_buffer, \c VK_EXT_queue_family_foreign, and optionally \c VK_KHR_external_semaphore_fd.
+    \c VK_ANDROID_external_memory_android_hardware_buffer and \c VK_EXT_queue_family_foreign.
     */
     ArrayView<const char*>      enabledDeviceExtensions;
 

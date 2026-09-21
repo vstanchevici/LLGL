@@ -250,19 +250,6 @@ struct BindingDescriptor
     \see PipelineLayoutDescriptor::heapBindings
     */
     std::uint32_t   arraySize   = 0;
-
-    /**
-    \brief Optional immutable sampler for a combined texture-sampler binding. By default null.
-    \remarks If this is non-null, \c type must be ResourceType::Texture with BindFlags::Sampled and the binding
-    refers to a combined texture-sampler in the shader, e.g. <code>layout(binding = 0) uniform sampler2D myTexture;</code> in GLSL/SPIR-V.
-    Only the texture is bound to this slot (e.g. via CommandBuffer::SetResource) and the sampler is baked into the pipeline layout.
-    \remarks This is required for samplers with a Y'CbCr conversion (see SamplerDescriptor::ycbcrConversion).
-    \remarks The sampler must not be released before the pipeline layout is released.
-    \note Only supported with: Vulkan, OpenGL.
-    \see PipelineLayoutDescriptor::bindings
-    \see PipelineLayoutDescriptor::heapBindings
-    */
-    Sampler*        immutableSampler    = nullptr;
 };
 
 /**
@@ -533,7 +520,10 @@ struct PipelineLayoutDescriptor
     or if a sampler binding is used with a texture at a different binding slot.
     For backends that only support combined texture-samplers in shaders, such as OpenGL,
     this is required unless each texture binding in the pipeline layout has its own sampler binding at the same binding slot.
-    \note Only supported with: OpenGL (Vulkan will be supported next).
+    \remarks With Vulkan, this is only supported for a sampler binding with BindFlags::SamplerYcbcrConversion,
+    which is bound as a combined image sampler at the binding slot of the combined texture-sampler.
+    \note Only supported with: OpenGL, Vulkan (Y'CbCr conversions only).
+    \see BindFlags::SamplerYcbcrConversion
     */
     std::vector<CombinedTextureSamplerDescriptor>   combinedTextureSamplers;
 

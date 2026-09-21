@@ -79,6 +79,7 @@ class DbgRenderSystem final : public RenderSystem
         void ValidateExternalTextureDesc(const TextureDescriptor& textureDesc, const ImageView* initialImage);
         void ValidateYcbcrConversionDesc(const YcbcrConversionDescriptor& ycbcrDesc, const char* contextDesc);
         void ValidateSamplerDesc(const SamplerDescriptor& samplerDesc);
+        void ValidatePipelineLayoutYcbcrBindings(const PipelineLayoutDescriptor& pipelineLayoutDesc);
         void ValidateTextureSize(std::uint32_t size, std::uint32_t limit, const char* textureTypeName);
         void ValidateTextureSizePassiveDimension(std::uint32_t size, const char* textureTypeName, const char* axisName);
         void Validate1DTextureSize(std::uint32_t size);

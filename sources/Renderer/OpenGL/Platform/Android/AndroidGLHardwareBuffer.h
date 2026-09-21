@@ -46,12 +46,6 @@ void AndroidGLAcquireHardwareBuffer(AHardwareBuffer* buffer);
 // Releases a reference to the specified Android hardware buffer.
 void AndroidGLReleaseHardwareBuffer(AHardwareBuffer* buffer);
 
-/*
-Makes the GL server wait on the specified native sync file descriptor (EGL_ANDROID_native_fence_sync and EGL_KHR_wait_sync).
-Falls back to waiting on the CPU if the extensions are unavailable. Ownership of the file descriptor is transferred.
-*/
-void AndroidGLWaitNativeFence(int syncFd);
-
 
 } // /namespace LLGL
 

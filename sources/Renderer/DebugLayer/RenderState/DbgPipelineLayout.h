@@ -39,6 +39,10 @@ class DbgPipelineLayout final : public PipelineLayout
         const PipelineLayoutDescriptor  desc;
         std::string                     label;
 
+        // Descriptor indices (into desc.bindings) of the combined texture-sampler with BindFlags::SamplerYcbcrConversion, or ~0u if there is none.
+        std::uint32_t                   ycbcrTextureDescriptor  = ~0u;
+        std::uint32_t                   ycbcrSamplerDescriptor  = ~0u;
+
 };
 
 

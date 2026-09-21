@@ -18,11 +18,6 @@
 #include "../Profile/GLProfile.h"
 #include <cstdint>
 
-#if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
-#   include <memory>
-#   include <unistd.h>
-#endif
-
 
 namespace LLGL
 {
@@ -479,53 +474,6 @@ struct GLCmdPushDebugGroup
 };
 
 //struct GLCmdPopDebugGroup {};
-
-#if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
-
-/*
-Owner of a native sync file descriptor. The descriptor is closed when the command buffer is recorded again or destroyed,
-unless it has been consumed by the execution of the command buffer. This also makes replaying a command buffer safe,
-since a consumed descriptor must not be waited on or closed a second time.
-*/
-struct GLNativeFence
-{
-    explicit GLNativeFence(int fd) :
-        fd { fd }
-    {
-    }
-
-    ~GLNativeFence()
-    {
-        if (fd >= 0)
-            ::close(fd);
-    }
-
-    GLNativeFence(const GLNativeFence&) = delete;
-    GLNativeFence& operator = (const GLNativeFence&) = delete;
-
-    // Returns the file descriptor and transfers its ownership to the caller, or -1 if it has already been consumed.
-    int Take()
-    {
-        const int takenFd = fd;
-        fd = -1;
-        return takenFd;
-    }
-
-    int fd = -1;
-};
-
-using GLNativeFenceSPtr = std::shared_ptr<GLNativeFence>;
-
-#endif // /LLGL_GLEXT_EGL_IMAGE_EXTERNAL
-
-struct GLCmdWaitNativeFence
-{
-    #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
-    GLNativeFence* nativeFence; // Owned by the command buffer that recorded this command
-    #else
-    int            nativeFence;
-    #endif
-};
 
 
 } // /namespace LLGL

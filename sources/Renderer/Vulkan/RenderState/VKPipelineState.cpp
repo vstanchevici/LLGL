@@ -11,11 +11,23 @@
 #include "../Shader/VKShader.h"
 #include "../Shader/VKShaderModulePool.h"
 #include "../../CheckedCast.h"
+#include "../../../Core/CoreUtils.h"
 
 
 namespace LLGL
 {
 
+
+VKYcbcrPipelineVariant::VKYcbcrPipelineVariant(VkDevice device) :
+    pipeline { device, vkDestroyPipeline }
+{
+}
+
+VKYcbcrPipelineVariant::~VKYcbcrPipelineVariant()
+{
+    /* Release layout permutation before the conversion, since the permutation refers to the conversion's canonical sampler */
+    VKPipelineLayoutPermutationPool::Get().ReleasePermutation(std::move(layoutPermutation));
+}
 
 VKPipelineState::VKPipelineState(
     VkDevice                    device,
@@ -23,19 +35,31 @@ VKPipelineState::VKPipelineState(
     const ArrayView<Shader*>&   shaders,
     const PipelineLayout*       pipelineLayout)
 :
+    device_    { device                    },
     pipeline_  { device, vkDestroyPipeline },
     bindPoint_ { bindPoint                 }
 {
     if (pipelineLayout != nullptr)
     {
         pipelineLayout_ = LLGL_CAST(const VKPipelineLayout*, pipelineLayout);
-        if (pipelineLayout_->CanHaveLayoutPermutations())
+        if (pipelineLayout_->HasYcbcrBinding())
+        {
+            /*
+            Layout permutations are created per Y'CbCr conversion when a texture is bound (see GetOrCreateYcbcrVariant),
+            so only store the parameters that are shared between all variants, i.e. push constants and texel buffers.
+            */
+            hasYcbcrVariants_ = true;
+            if (!pipelineLayout_->BuildPermutationParams(shaders, ycbcrBaseParams_, uniformRanges_))
+                pipelineLayout_->GetDefaultPermutationParams(ycbcrBaseParams_);
+        }
+        else if (pipelineLayout_->CanHaveLayoutPermutations())
             pipelineLayoutPerm_ = pipelineLayout_->CreatePermutation(device, shaders, uniformRanges_);
     }
 }
 
 VKPipelineState::~VKPipelineState()
 {
+    ycbcrVariants_.clear();
     VKPipelineLayoutPermutationPool::Get().ReleasePermutation(std::move(pipelineLayoutPerm_));
 }
 
@@ -44,9 +68,9 @@ const Report* VKPipelineState::GetReport() const
     return (*report_.GetText() != '\0' || report_.HasErrors() ? &report_ : nullptr);
 }
 
-void VKPipelineState::BindPipelineAndStaticDescriptorSet(VkCommandBuffer commandBuffer)
+void VKPipelineState::BindPipelineAndStaticDescriptorSet(VkCommandBuffer commandBuffer, VkPipeline pipeline, VkPipelineLayout layout)
 {
-    vkCmdBindPipeline(commandBuffer, GetBindPoint(), GetVkPipeline());
+    vkCmdBindPipeline(commandBuffer, GetBindPoint(), pipeline);
 
     if (pipelineLayout_ != nullptr)
     {
@@ -56,7 +80,7 @@ void VKPipelineState::BindPipelineAndStaticDescriptorSet(VkCommandBuffer command
             vkCmdBindDescriptorSets(
                 /*commandBuffer:*/      commandBuffer,
                 /*pipelineBindPoint:*/  GetBindPoint(),
-                /*layout:*/             GetVkPipelineLayout(),
+                /*layout:*/             layout,
                 /*firstSet:*/           pipelineLayout_->GetBindPointForImmutableSamplers(),
                 /*descriptorSetCount:*/ 1,
                 /*pDescriptorSets:*/    &staticDescriptorSet,
@@ -70,6 +94,7 @@ void VKPipelineState::BindPipelineAndStaticDescriptorSet(VkCommandBuffer command
 //private
 void VKPipelineState::BindDescriptorSets(
     VkCommandBuffer         commandBuffer,
+    VkPipelineLayout        layout,
     std::uint32_t           firstSet,
     std::uint32_t           descriptorSetCount,
     const VkDescriptorSet*  descriptorSets)
@@ -77,7 +102,7 @@ void VKPipelineState::BindDescriptorSets(
     vkCmdBindDescriptorSets(
         /*commandBuffer:*/      commandBuffer,
         /*pipelineBindPoint:*/  GetBindPoint(),
-        /*layout:*/             GetVkPipelineLayout(),
+        /*layout:*/             layout,
         /*firstSet:*/           firstSet,
         /*descriptorSetCount:*/ descriptorSetCount,
         /*pDescriptorSets:*/    descriptorSets,
@@ -86,24 +111,22 @@ void VKPipelineState::BindDescriptorSets(
     );
 }
 
-void VKPipelineState::BindDynamicDescriptorSet(VkCommandBuffer commandBuffer, VkDescriptorSet descriptorSet)
+void VKPipelineState::BindDynamicDescriptorSet(VkCommandBuffer commandBuffer, VkPipelineLayout layout, VkDescriptorSet descriptorSet)
 {
     if (pipelineLayout_ != nullptr && descriptorSet != VK_NULL_HANDLE)
-        BindDescriptorSets(commandBuffer, pipelineLayout_->GetBindPointForDynamicBindings(), 1, &descriptorSet);
+        BindDescriptorSets(commandBuffer, layout, pipelineLayout_->GetBindPointForDynamicBindings(), 1, &descriptorSet);
 }
 
-void VKPipelineState::BindHeapDescriptorSet(VkCommandBuffer commandBuffer, VkDescriptorSet descriptorSet)
+void VKPipelineState::BindHeapDescriptorSet(VkCommandBuffer commandBuffer, VkPipelineLayout layout, VkDescriptorSet descriptorSet)
 {
     if (pipelineLayout_ != nullptr && descriptorSet != VK_NULL_HANDLE)
-        BindDescriptorSets(commandBuffer, pipelineLayout_->GetBindPointForHeapBindings(), 1, &descriptorSet);
+        BindDescriptorSets(commandBuffer, layout, pipelineLayout_->GetBindPointForHeapBindings(), 1, &descriptorSet);
 }
 
-void VKPipelineState::PushConstants(VkCommandBuffer commandBuffer, std::uint32_t first, const char* data, std::uint32_t size)
+void VKPipelineState::PushConstants(VkCommandBuffer commandBuffer, VkPipelineLayout layout, std::uint32_t first, const char* data, std::uint32_t size)
 {
     if (first >= uniformRanges_.size())
         return /*OutOfBounds*/;
-
-    VkPipelineLayout layout = GetVkPipelineLayout();
 
     const char* pendingData = data;
     VkPushConstantRange pendingRange = {};
@@ -146,6 +169,34 @@ void VKPipelineState::PushConstants(VkCommandBuffer commandBuffer, std::uint32_t
     FlushPushConstants();
 }
 
+const VKYcbcrPipelineVariant* VKPipelineState::GetOrCreateYcbcrVariant(const VKYcbcrConversionSPtr& conversion)
+{
+    if (!hasYcbcrVariants_ || !conversion)
+        return nullptr;
+
+    /* Variants can be requested by multiple command buffers that are recorded in parallel */
+    std::lock_guard<std::mutex> guard{ ycbcrVariantsMutex_ };
+
+    /* Conversions are shared by the pool for equal descriptors, so they can be compared by pointer */
+    for (const auto& variant : ycbcrVariants_)
+    {
+        if (variant->conversion == conversion)
+            return variant.get();
+    }
+
+    /* Create layout permutation with canonical sampler of this conversion and a native pipeline for it */
+    auto variant = MakeUnique<VKYcbcrPipelineVariant>(device_);
+    {
+        variant->conversion         = conversion;
+        variant->layoutPermutation  = pipelineLayout_->CreateYcbcrPermutation(device_, ycbcrBaseParams_, *conversion);
+    }
+    if (!CreateVkPipelineVariant(variant->layoutPermutation->GetVkPipelineLayout(), variant->pipeline))
+        return nullptr;
+
+    ycbcrVariants_.push_back(std::move(variant));
+    return ycbcrVariants_.back().get();
+}
+
 bool VKPipelineState::GetBindingTableAndDescriptorCache(const VKLayoutBindingTable*& outBindingTable, VKDescriptorCache*& outDescriptorCache) const
 {
     if (pipelineLayoutPerm_.get() != nullptr)
@@ -182,11 +233,29 @@ VkPipelineLayout VKPipelineState::GetVkPipelineLayout() const
     return VKPipelineLayout::GetDefault();
 }
 
-void VKPipelineState::GetShaderCreateInfoAndOptionalPermutation(VKShader& shaderVK, VkPipelineShaderStageCreateInfo& outCreateInfo)
+void VKPipelineState::GetShaderCreateInfoAndOptionalPermutation(
+    VKShader&                           shaderVK,
+    VkPipelineShaderStageCreateInfo&    outCreateInfo,
+    VKPtr<VkShaderModule>*              outOwnedShaderModule)
 {
     shaderVK.FillShaderStageCreateInfo(outCreateInfo);
-    if (pipelineLayout_ != nullptr && pipelineLayout_->NeedsShaderModulePermutation(shaderVK))
+    const bool needsPermutation = (pipelineLayout_ != nullptr && pipelineLayout_->NeedsShaderModulePermutation(shaderVK));
+    if (outOwnedShaderModule != nullptr)
+    {
+        /* Create a shader module owned by this PSO, since shader modules of the pool are released together with their shader */
+        if (needsPermutation)
+            *outOwnedShaderModule = pipelineLayout_->CreateVkShaderModulePermutation(shaderVK);
+        if (outOwnedShaderModule->Get() == VK_NULL_HANDLE)
+            *outOwnedShaderModule = shaderVK.CreateVkShaderModuleCopy();
+        outCreateInfo.module = outOwnedShaderModule->Get();
+    }
+    else if (needsPermutation)
         outCreateInfo.module = VKShaderModulePool::Get().GetOrCreateVkShaderModulePermutation(shaderVK, *pipelineLayout_);
+}
+
+bool VKPipelineState::CreateVkPipelineVariant(VkPipelineLayout /*pipelineLayout*/, VKPtr<VkPipeline>& /*outPipeline*/)
+{
+    return false; // Y'CbCr variants are not supported by default
 }
 
 

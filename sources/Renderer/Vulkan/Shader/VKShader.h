@@ -78,6 +78,9 @@ class VKShader final : public Shader
         */
         VKPtr<VkShaderModule> CreateVkShaderModulePermutation(const PermutationBindingFunc& permutationBindingFunc);
 
+        // Creates a new shader module from the same SPIR-V code as this shader, e.g. for pipelines that are created after this shader might have been released.
+        VKPtr<VkShaderModule> CreateVkShaderModuleCopy() const;
+
         // Returns the Vulkan shader module.
         inline const VKPtr<VkShaderModule>& GetShaderModule() const
         {

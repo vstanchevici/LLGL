@@ -1223,7 +1223,7 @@ void VKRenderSystem::FlushCommandBuffer(VkCommandBuffer commandBuffer)
 
 Texture* VKRenderSystem::CreateExternalTexture(const TextureDescriptor& textureDesc)
 {
-    /* Import external image; its layout is managed by CommandBuffer::AcquireExternalTexture and CommandBuffer::ReleaseExternalTexture */
+    /* Import external image; its ownership and layout are transferred implicitly by each command buffer that binds it (see VKCommandBuffer::TrackExternalTexture) */
     VKTexture* textureVK = textures_.emplace<VKTexture>(device_, *deviceMemoryMngr_, textureDesc, ycbcrConversionPool_.get());
     textureVK->CreateInternalImageView(device_);
     return textureVK;

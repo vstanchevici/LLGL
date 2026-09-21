@@ -1837,36 +1837,84 @@ void DbgRenderSystem::ValidatePipelineLayoutDesc(const PipelineLayoutDescriptor&
         }
     }
 
-    /* Validate immutable samplers for combined texture-sampler bindings */
-    auto ValidateImmutableSamplerBinding = [this](const BindingDescriptor& binding)
+    ValidatePipelineLayoutYcbcrBindings(pipelineLayoutDesc);
+}
+
+// Returns the number of combined texture-samplers that refer to the specified sampler binding by name.
+static std::size_t CountCombinedTextureSamplersWithSampler(const PipelineLayoutDescriptor& pipelineLayoutDesc, const StringLiteral& samplerName)
+{
+    std::size_t n = 0;
+    for (const CombinedTextureSamplerDescriptor& combinedDesc : pipelineLayoutDesc.combinedTextureSamplers)
     {
-        if (binding.immutableSampler != nullptr)
-        {
-            if (binding.type != ResourceType::Texture || (binding.bindFlags & BindFlags::Sampled) == 0 || (binding.bindFlags & BindFlags::Storage) != 0)
-            {
-                const std::string bindingLabel = GetBindingDescLabel(binding);
-                LLGL_DBG_ERROR(
-                    ErrorType::InvalidArgument,
-                    "binding %s has an immutable sampler, but only sampled textures can be combined with immutable samplers",
-                    bindingLabel.c_str()
-                );
-            }
-        }
-    };
+        if (combinedDesc.samplerName.compare(samplerName) == 0)
+            ++n;
+    }
+    return n;
+}
 
+void DbgRenderSystem::ValidatePipelineLayoutYcbcrBindings(const PipelineLayoutDescriptor& pipelineLayoutDesc)
+{
+    /* Y'CbCr sampler bindings are only allowed as individual bindings, since the native pipeline is resolved when the texture is bound */
     for (const BindingDescriptor& binding : pipelineLayoutDesc.heapBindings)
-        ValidateImmutableSamplerBinding(binding);
-    for (const BindingDescriptor& binding : pipelineLayoutDesc.bindings)
-        ValidateImmutableSamplerBinding(binding);
+    {
+        if ((binding.bindFlags & BindFlags::SamplerYcbcrConversion) != 0)
+        {
+            const std::string bindingLabel = GetBindingDescLabel(binding);
+            LLGL_DBG_ERROR(
+                ErrorType::InvalidArgument,
+                "heap binding %s cannot have bind flag 'SamplerYcbcrConversion'; only individual bindings are supported",
+                bindingLabel.c_str()
+            );
+        }
+    }
 
-    /* Static samplers cannot have Y'CbCr conversions, because they are not combined with a texture */
+    std::size_t numYcbcrBindings = 0;
+
+    for (const BindingDescriptor& binding : pipelineLayoutDesc.bindings)
+    {
+        if ((binding.bindFlags & BindFlags::SamplerYcbcrConversion) == 0)
+            continue;
+
+        ++numYcbcrBindings;
+
+        const std::string bindingLabel = GetBindingDescLabel(binding);
+        if (binding.type != ResourceType::Sampler)
+        {
+            LLGL_DBG_ERROR(
+                ErrorType::InvalidArgument,
+                "binding %s has bind flag 'SamplerYcbcrConversion', but only sampler bindings can have this flag",
+                bindingLabel.c_str()
+            );
+        }
+
+        const std::size_t numReferences = CountCombinedTextureSamplersWithSampler(pipelineLayoutDesc, binding.name);
+        if (numReferences != 1)
+        {
+            LLGL_DBG_ERROR(
+                ErrorType::InvalidArgument,
+                "sampler binding %s with bind flag 'SamplerYcbcrConversion' must be referenced by exactly one combined texture-sampler, but %zu were specified",
+                bindingLabel.c_str(), numReferences
+            );
+        }
+    }
+
+    if (numYcbcrBindings > 1)
+    {
+        LLGL_DBG_ERROR(
+            ErrorType::InvalidArgument,
+            "pipeline layout can have at most one sampler binding with bind flag 'SamplerYcbcrConversion', but %zu were specified",
+            numYcbcrBindings
+        );
+    }
+
+    /* Static samplers cannot have Y'CbCr conversions, because the conversion is derived from the bound texture */
     for (const StaticSamplerDescriptor& staticSampler : pipelineLayoutDesc.staticSamplers)
     {
         if (staticSampler.sampler.ycbcrConversion != nullptr)
         {
             LLGL_DBG_ERROR(
                 ErrorType::InvalidArgument,
-                "static sampler '%s' cannot have a Y'CbCr conversion; use BindingDescriptor::immutableSampler instead",
+                "static sampler '%s' cannot have a Y'CbCr conversion; use a sampler binding with 'LLGL::BindFlags::SamplerYcbcrConversion' instead",
                 staticSampler.name.c_str()
             );
         }

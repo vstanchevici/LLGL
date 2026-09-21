@@ -938,6 +938,7 @@ namespace LLGL
         CopySrc                = (1 << 10),
         CopyDst                = (1 << 11),
         TexelBuffer            = (1 << 12),
+        SamplerYcbcrConversion = (1 << 13),
     }
 
     [Flags]
@@ -1803,24 +1804,22 @@ namespace LLGL
     {
         public BindingDescriptor() { }
 
-        public BindingDescriptor(string name = null, ResourceType type = ResourceType.Undefined, BindFlags bindFlags = 0, StageFlags stageFlags = 0, BindingSlot slot = new BindingSlot(), int arraySize = 0, Sampler immutableSampler = null)
+        public BindingDescriptor(string name = null, ResourceType type = ResourceType.Undefined, BindFlags bindFlags = 0, StageFlags stageFlags = 0, BindingSlot slot = new BindingSlot(), int arraySize = 0)
         {
-            Name             = name;
-            Type             = type;
-            BindFlags        = bindFlags;
-            StageFlags       = stageFlags;
-            Slot             = slot;
-            ArraySize        = arraySize;
-            ImmutableSampler = immutableSampler;
+            Name       = name;
+            Type       = type;
+            BindFlags  = bindFlags;
+            StageFlags = stageFlags;
+            Slot       = slot;
+            ArraySize  = arraySize;
         }
 
         public AnsiString   Name { get; set; }
-        public ResourceType Type { get; set; }             = ResourceType.Undefined;
-        public BindFlags    BindFlags { get; set; }        = 0;
-        public StageFlags   StageFlags { get; set; }       = 0;
-        public BindingSlot  Slot { get; set; }             = new BindingSlot();
-        public int          ArraySize { get; set; }        = 0;
-        public Sampler      ImmutableSampler { get; set; } = null;
+        public ResourceType Type { get; set; }       = ResourceType.Undefined;
+        public BindFlags    BindFlags { get; set; }  = 0;
+        public StageFlags   StageFlags { get; set; } = 0;
+        public BindingSlot  Slot { get; set; }       = new BindingSlot();
+        public int          ArraySize { get; set; }  = 0;
 
         internal BindingDescriptor(NativeLLGL.BindingDescriptor native)
         {
@@ -1838,15 +1837,11 @@ namespace LLGL
                     {
                         native.name = namePtr;
                     }
-                    native.type             = Type;
-                    native.bindFlags        = (int)BindFlags;
-                    native.stageFlags       = (int)StageFlags;
-                    native.slot             = Slot;
-                    native.arraySize        = ArraySize;
-                    if (ImmutableSampler != null)
-                    {
-                        native.immutableSampler = ImmutableSampler.Native;
-                    }
+                    native.type       = Type;
+                    native.bindFlags  = (int)BindFlags;
+                    native.stageFlags = (int)StageFlags;
+                    native.slot       = Slot;
+                    native.arraySize  = ArraySize;
                 }
                 return native;
             }
@@ -1854,13 +1849,12 @@ namespace LLGL
             {
                 unsafe
                 {
-                    Name             = Marshal.PtrToStringAnsi((IntPtr)value.name);
-                    Type             = value.type;
-                    BindFlags        = (BindFlags)value.bindFlags;
-                    StageFlags       = (StageFlags)value.stageFlags;
-                    Slot             = value.slot;
-                    ArraySize        = value.arraySize;
-                    ImmutableSampler.Native= value.immutableSampler;
+                    Name       = Marshal.PtrToStringAnsi((IntPtr)value.name);
+                    Type       = value.type;
+                    BindFlags  = (BindFlags)value.bindFlags;
+                    StageFlags = (StageFlags)value.stageFlags;
+                    Slot       = value.slot;
+                    ArraySize  = value.arraySize;
                 }
             }
         }
@@ -4182,7 +4176,6 @@ namespace LLGL
             public int          stageFlags;       /* = 0 */
             public BindingSlot  slot;
             public int          arraySize;        /* = 0 */
-            public Sampler      immutableSampler; /* = null */
         }
 
         public unsafe struct UniformDescriptor
@@ -4856,12 +4849,6 @@ namespace LLGL
 
         [DllImport(DllName, EntryPoint="llglResourceBarrier", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe void ResourceBarrier(int numBuffers, Buffer* buffers, int numTextures, Texture* textures);
-
-        [DllImport(DllName, EntryPoint="llglAcquireExternalTexture", CallingConvention=CallingConvention.Cdecl)]
-        public static extern unsafe void AcquireExternalTexture(Texture texture, long nativeFence);
-
-        [DllImport(DllName, EntryPoint="llglReleaseExternalTexture", CallingConvention=CallingConvention.Cdecl)]
-        public static extern unsafe void ReleaseExternalTexture(Texture texture);
 
         [DllImport(DllName, EntryPoint="llglBeginRenderPass", CallingConvention=CallingConvention.Cdecl)]
         public static extern unsafe void BeginRenderPass(RenderTarget renderTarget);

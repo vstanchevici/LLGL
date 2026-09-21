@@ -9,12 +9,18 @@
 
 layout(location = 0) in vec2 vTexCoord;
 
-// Combined texture-sampler with immutable Y'CbCr sampler: the hardware returns RGB values
+// Combined texture-sampler with Y'CbCr conversion (see LLGL::BindFlags::SamplerYcbcrConversion): the hardware returns RGB values
 layout(binding = 0) uniform sampler2D ycbcrMap;
+
+// Uniform to validate that push constants can be set before the Y'CbCr pipeline variant is resolved
+layout(push_constant) uniform Params
+{
+    vec4 colorScale;
+};
 
 layout(location = 0) out vec4 outColor;
 
 void main()
 {
-    outColor = vec4(texture(ycbcrMap, vTexCoord).rgb, 1.0);
+    outColor = vec4(texture(ycbcrMap, vTexCoord).rgb * colorScale.rgb, 1.0);
 }

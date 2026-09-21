@@ -22,14 +22,12 @@ namespace LLGL
 
 class VKQueryHeap;
 
-// Helper function to submit the specified Vulkan command buffer to a command queue.
-VkResult VKSubmitCommandBuffer(
-    VkQueue                     commandQueue,
-    VkCommandBuffer             commandBuffer,
-    VkFence                     fence,
-    std::uint32_t               numWaitSemaphores   = 0,
-    const VkSemaphore*          waitSemaphores      = nullptr,
-    const VkPipelineStageFlags* waitStageMasks      = nullptr
+// Helper function to submit the specified Vulkan command buffers in a single batch to a command queue.
+VkResult VKSubmitCommandBuffers(
+    VkQueue                 commandQueue,
+    std::uint32_t           numCommandBuffers,
+    const VkCommandBuffer*  commandBuffers,
+    VkFence                 fence
 );
 
 class VKCommandQueue final : public CommandQueue

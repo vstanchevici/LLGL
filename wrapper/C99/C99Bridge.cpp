@@ -147,7 +147,6 @@ void ConvertBindingDesc(BindingDescriptor& dst, const LLGLBindingDescriptor& src
     dst.stageFlags  = src.stageFlags;
     dst.slot        = { src.slot.index, src.slot.set };
     dst.arraySize   = src.arraySize;
-    dst.immutableSampler = LLGL_PTR(Sampler, src.immutableSampler);
 }
 
 void ConvertStaticSamplerDesc(StaticSamplerDescriptor& dst, const LLGLStaticSamplerDescriptor& src)

@@ -138,16 +138,6 @@ static bool DECL_LOADVKEXT_PROC(KHR_get_physical_device_properties2)
     return true;
 }
 
-#if VK_KHR_external_semaphore_fd
-
-static bool DECL_LOADVKEXT_PROC(KHR_external_semaphore_fd)
-{
-    LOAD_VKPROC( vkImportSemaphoreFdKHR );
-    return true;
-}
-
-#endif // /VK_KHR_external_semaphore_fd
-
 #if VK_ANDROID_external_memory_android_hardware_buffer
 
 static bool DECL_LOADVKEXT_PROC(ANDROID_external_memory_android_hardware_buffer)
@@ -285,10 +275,6 @@ bool VKLoadDeviceExtensions(VkDevice device, const ArrayView<const char*>& suppo
     ENABLE_VKEXT( KHR_external_memory            );
     ENABLE_VKEXT( KHR_dedicated_allocation       );
     ENABLE_VKEXT( EXT_queue_family_foreign       );
-
-    #if VK_KHR_external_semaphore_fd
-    LoadExtension(VKExt::KHR_external_semaphore_fd, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME, Load_VK_KHR_external_semaphore_fd);
-    #endif
 
     #if VK_ANDROID_external_memory_android_hardware_buffer
     LoadExtension(

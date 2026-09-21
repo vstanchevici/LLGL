@@ -19,17 +19,6 @@
 #include <LLGL/Backend/CommandBuffer.Debugging.inl>
 /*exclude<LLGL/Backend/CommandBuffer.Extensions.inl> */
 
-/* ----- External textures ----- */
-
-virtual void AcquireExternalTexture(
-    LLGL::Texture&  texture,
-    long long       nativeFence
-) override final;
-
-virtual void ReleaseExternalTexture(
-    LLGL::Texture&  texture
-) override final;
-
 /* ----- Extensions ----- */
 
 virtual void DoNativeCommand(

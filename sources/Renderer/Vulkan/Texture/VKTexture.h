@@ -217,6 +217,12 @@ class VKTexture final : public Texture
             return ycbcrConversion_.get();
         }
 
+        // Returns the shared Y'CbCr conversion of this texture, e.g. to keep it alive in pipeline variants (see VKPipelineState::GetOrCreateYcbcrVariant).
+        inline const VKYcbcrConversionSPtr& GetYcbcrConversionSPtr() const
+        {
+            return ycbcrConversion_;
+        }
+
         // Returns true if this texture has a multi-planar format, e.g. VK_FORMAT_G8_B8R8_2PLANE_420_UNORM.
         bool IsMultiPlanar() const;
 

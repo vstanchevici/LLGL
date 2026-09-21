@@ -931,6 +931,7 @@ const (
     BindCopySrc                = (1 << 10)
     BindCopyDst                = (1 << 11)
     BindTexelBuffer            = (1 << 12)
+    BindSamplerYcbcrConversion = (1 << 13)
 )
 
 type CPUAccessFlags int
@@ -1316,13 +1317,12 @@ type ImageView struct {
 }
 
 type BindingDescriptor struct {
-    Name             string
-    Type             ResourceType /* = ResourceTypeUndefined */
-    BindFlags        uint         /* = 0 */
-    StageFlags       uint         /* = 0 */
-    Slot             BindingSlot
-    ArraySize        uint32       /* = 0 */
-    ImmutableSampler *Sampler     /* = nil */
+    Name       string
+    Type       ResourceType /* = ResourceTypeUndefined */
+    BindFlags  uint         /* = 0 */
+    StageFlags uint         /* = 0 */
+    Slot       BindingSlot
+    ArraySize  uint32       /* = 0 */
 }
 
 type UniformDescriptor struct {

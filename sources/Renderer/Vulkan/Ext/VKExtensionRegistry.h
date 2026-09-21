@@ -36,7 +36,6 @@ enum class VKExt
     KHR_sampler_ycbcr_conversion,
     KHR_external_memory,
     KHR_dedicated_allocation,
-    KHR_external_semaphore_fd,
 
     /* Multivendor extensions */
     EXT_conditional_rendering,

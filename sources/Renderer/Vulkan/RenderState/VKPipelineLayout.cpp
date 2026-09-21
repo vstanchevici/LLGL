@@ -12,6 +12,7 @@
 #include "../VKCore.h"
 #include "../VKStaticLimits.h"
 #include "../Texture/VKSampler.h"
+#include "../Texture/VKYcbcrConversionPool.h"
 #include "../Shader/VKShader.h"
 #include "../Shader/VKShaderModulePool.h"
 #include "../../ResourceUtils.h"
@@ -19,6 +20,7 @@
 #include "../../../Core/Assertion.h"
 #include <LLGL/Utils/ForRange.h>
 #include <LLGL/Container/SmallVector.h>
+#include <LLGL/Log.h>
 #include <algorithm>
 
 
@@ -38,14 +40,18 @@ VKPipelineLayout::VKPipelineLayout(VkDevice device, const PipelineLayoutDescript
     barrierFlags_               { desc.barrierFlags                    },
     flags_                      { 0                                    }
 {
-    /* Reserve storage for immutable samplers of combined texture-samplers, so pointers into this container remain valid */
-    ReserveCombinedImmutableSamplers(desc);
+    /* Replace the Y'CbCr combined texture-sampler by a single combined image sampler for the native descriptor set layout */
+    std::vector<BindingDescriptor> ycbcrDynamicBindings;
+    const bool hasYcbcrBinding = ResolveYcbcrBindings(desc, ycbcrDynamicBindings);
+    const std::vector<BindingDescriptor>& dynamicBindings = (hasYcbcrBinding ? ycbcrDynamicBindings : desc.bindings);
 
     /* Create Vulkan descriptor set layouts */
     if (!desc.heapBindings.empty())
         CreateDescriptorSetLayout(device, desc.heapBindings, bindingTable_.heapBindings, setLayoutHeapBindings_);
-    if (!desc.bindings.empty())
-        CreateDescriptorSetLayout(device, desc.bindings, bindingTable_.dynamicBindings, setLayoutDynamicBindings_);
+    if (!dynamicBindings.empty())
+        CreateDescriptorSetLayout(device, dynamicBindings, bindingTable_.dynamicBindings, setLayoutDynamicBindings_);
+    if (hasYcbcrBinding)
+        InsertYcbcrVirtualBinding();
     if (!desc.staticSamplers.empty())
         CreateImmutableSamplers(device, desc.staticSamplers);
 
@@ -60,7 +66,7 @@ VKPipelineLayout::VKPipelineLayout(VkDevice device, const PipelineLayoutDescript
     /* Don't create a VkPipelineLayout object if this instance only has push constants as those are part of the permutations for each PSO */
     if (!desc.heapBindings.empty() || !desc.bindings.empty() || !desc.staticSamplers.empty())
     {
-        BuildDescriptorSetBindingTables(desc);
+        BuildDescriptorSetBindingTables(desc, dynamicBindings);
         pipelineLayout_ = CreateVkPipelineLayout(device);
     }
 }
@@ -202,9 +208,22 @@ VKPipelineLayoutPermutationSPtr VKPipelineLayout::CreatePermutation(
     const ArrayView<Shader*>&           shaders,
     std::vector<VkPushConstantRange>&   outUniformRanges) const
 {
-    #if LLGL_VK_ENABLE_SPIRV_REFLECT
-
     VKLayoutPermutationParameters permutationParams;
+    if (BuildPermutationParams(shaders, permutationParams, outUniformRanges))
+    {
+        return VKPipelineLayoutPermutationPool::Get().CreatePermutation(
+            device, this, setLayoutImmutableSamplers_.Get(), permutationParams
+        );
+    }
+    return nullptr;
+}
+
+bool VKPipelineLayout::BuildPermutationParams(
+    const ArrayView<Shader*>&           shaders,
+    VKLayoutPermutationParameters&      permutationParams,
+    std::vector<VkPushConstantRange>&   outUniformRanges) const
+{
+    #if LLGL_VK_ENABLE_SPIRV_REFLECT
 
     /*
     Only check all shaders for any texel buffers if this PSO layout is known to contain non-uniform buffers.
@@ -252,10 +271,7 @@ VKPipelineLayoutPermutationSPtr VKPipelineLayout::CreatePermutation(
     if (!permutationParams.pushConstantRanges.empty() || hasTexelBuffers)
     {
         permutationParams.numImmutableSamplers = static_cast<std::uint32_t>(immutableSamplers_.size());
-
-        return VKPipelineLayoutPermutationPool::Get().CreatePermutation(
-            device, this, setLayoutImmutableSamplers_.Get(), permutationParams
-        );
+        return true;
     }
 
     #else // LLGL_VK_ENABLE_SPIRV_REFLECT
@@ -264,7 +280,32 @@ VKPipelineLayoutPermutationSPtr VKPipelineLayout::CreatePermutation(
 
     #endif // /LLGL_VK_ENABLE_SPIRV_REFLECT
 
-    return nullptr;
+    return false;
+}
+
+void VKPipelineLayout::GetDefaultPermutationParams(VKLayoutPermutationParameters& outParams) const
+{
+    outParams.setLayoutHeapBindings     = setLayoutHeapBindings_.GetVkLayoutBindings();
+    outParams.setLayoutDynamicBindings  = setLayoutDynamicBindings_.GetVkLayoutBindings();
+    outParams.pushConstantRanges.clear();
+    outParams.numImmutableSamplers      = static_cast<std::uint32_t>(immutableSamplers_.size());
+}
+
+VKPipelineLayoutPermutationSPtr VKPipelineLayout::CreateYcbcrPermutation(
+    VkDevice                                device,
+    const VKLayoutPermutationParameters&    baseParams,
+    const VKYcbcrConversion&                conversion) const
+{
+    LLGL_ASSERT(HasYcbcrBinding());
+    LLGL_ASSERT(ycbcrSetLayoutBinding_ < baseParams.setLayoutDynamicBindings.size());
+
+    /* Bake canonical sampler of the conversion into the combined image sampler; the address is unique per conversion, so permutations are pooled per conversion */
+    VKLayoutPermutationParameters permutationParams = baseParams;
+    permutationParams.setLayoutDynamicBindings[ycbcrSetLayoutBinding_].pImmutableSamplers = conversion.GetCanonicalVkSamplerAddress();
+
+    return VKPipelineLayoutPermutationPool::Get().CreatePermutation(
+        device, this, setLayoutImmutableSamplers_.Get(), permutationParams
+    );
 }
 
 //private
@@ -349,8 +390,8 @@ static VkDescriptorType GetVkDescriptorType(const BindingDescriptor& desc)
         case ResourceType::Texture:
             if ((desc.bindFlags & (BindFlags::Storage)) != 0)
                 return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            else if (desc.immutableSampler != nullptr)
-                return VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            else if ((desc.bindFlags & BindFlags::SamplerYcbcrConversion) != 0)
+                return VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; // Internal marker from ResolveYcbcrBindings()
             else
                 return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
             break;
@@ -378,13 +419,13 @@ static VkDescriptorType GetVkDescriptorType(const BindingDescriptor& desc)
     VKTypes::MapFailed("ResourceType", "VkDescriptorType");
 }
 
-static void ConvertBindingDesc(VkDescriptorSetLayoutBinding& dst, const BindingDescriptor& src, const VkSampler* immutableSamplers)
+static void ConvertBindingDesc(VkDescriptorSetLayoutBinding& dst, const BindingDescriptor& src)
 {
     dst.binding             = src.slot.index;
     dst.descriptorType      = GetVkDescriptorType(src);
     dst.descriptorCount     = std::max(1u, src.arraySize);
     dst.stageFlags          = GetVkShaderStageFlags(src.stageFlags);
-    dst.pImmutableSamplers  = immutableSamplers;
+    dst.pImmutableSamplers  = nullptr; // Immutable samplers of Y'CbCr conversions are only baked into layout permutations
 }
 
 static bool IsNonUniformBufferBinding(const BindingDescriptor& bindingDesc)
@@ -404,7 +445,7 @@ void VKPipelineLayout::CreateDescriptorSetLayout(
 
     for_range(i, numBindings)
     {
-        ConvertBindingDesc(setLayoutBindings[i], inBindings[i], AppendCombinedImmutableSamplers(inBindings[i]));
+        ConvertBindingDesc(setLayoutBindings[i], inBindings[i]);
 
         if (IsNonUniformBufferBinding(inBindings[i]))
             flags_ |= PSOLayoutFlag_HasNonUniformBuffers;
@@ -417,39 +458,85 @@ void VKPipelineLayout::CreateDescriptorSetLayout(
     AllocateDescriptorBarriers(outBindings);
 }
 
-// Returns the number of immutable samplers that are required for combined texture-samplers in the specified bindings.
-static std::size_t CountCombinedImmutableSamplers(const std::vector<BindingDescriptor>& bindings)
+// Returns the index of the binding with the specified name and type, or ~0u if there is no such binding.
+static std::uint32_t FindBindingIndex(const std::vector<BindingDescriptor>& bindings, const StringLiteral& name, ResourceType type)
 {
-    std::size_t n = 0;
-    for (const BindingDescriptor& binding : bindings)
+    for_range(i, bindings.size())
     {
-        if (binding.type == ResourceType::Texture && binding.immutableSampler != nullptr)
-            n += std::max(1u, binding.arraySize);
+        if (bindings[i].type == type && bindings[i].name.compare(name) == 0)
+            return static_cast<std::uint32_t>(i);
     }
-    return n;
+    return ~0u;
 }
 
-void VKPipelineLayout::ReserveCombinedImmutableSamplers(const PipelineLayoutDescriptor& desc)
+// Returns the combined texture-sampler that refers to the specified sampler name, or null if there is none.
+static const CombinedTextureSamplerDescriptor* FindCombinedTextureSampler(const PipelineLayoutDescriptor& desc, const StringLiteral& samplerName)
 {
-    const std::size_t numSamplers = CountCombinedImmutableSamplers(desc.heapBindings) + CountCombinedImmutableSamplers(desc.bindings);
-    combinedImmutableSamplers_.reserve(numSamplers);
+    for (const CombinedTextureSamplerDescriptor& combinedDesc : desc.combinedTextureSamplers)
+    {
+        if (combinedDesc.samplerName.compare(samplerName) == 0)
+            return &combinedDesc;
+    }
+    return nullptr;
 }
 
-const VkSampler* VKPipelineLayout::AppendCombinedImmutableSamplers(const BindingDescriptor& binding)
+bool VKPipelineLayout::ResolveYcbcrBindings(const PipelineLayoutDescriptor& desc, std::vector<BindingDescriptor>& outBindings)
 {
-    if (binding.type != ResourceType::Texture || binding.immutableSampler == nullptr)
-        return nullptr;
+    for_range(samplerIndex, desc.bindings.size())
+    {
+        const BindingDescriptor& samplerBinding = desc.bindings[samplerIndex];
+        if (samplerBinding.type != ResourceType::Sampler || (samplerBinding.bindFlags & BindFlags::SamplerYcbcrConversion) == 0)
+            continue;
 
-    /* Container must have been reserved to not invalidate previous pointers */
-    const std::uint32_t numSamplers = std::max(1u, binding.arraySize);
-    LLGL_ASSERT(combinedImmutableSamplers_.size() + numSamplers <= combinedImmutableSamplers_.capacity());
+        /* Find texture that is combined with this sampler */
+        const CombinedTextureSamplerDescriptor* combinedDesc = FindCombinedTextureSampler(desc, samplerBinding.name);
+        if (combinedDesc == nullptr)
+        {
+            Log::Errorf("sampler binding '%s' with Y'CbCr conversion is not referenced by any combined texture-sampler\n", samplerBinding.name.c_str());
+            return false;
+        }
 
-    /* Use the same sampler for all array elements of this binding */
-    auto* samplerVK = LLGL_CAST(VKSampler*, binding.immutableSampler);
-    const std::size_t first = combinedImmutableSamplers_.size();
-    combinedImmutableSamplers_.insert(combinedImmutableSamplers_.end(), numSamplers, samplerVK->GetVkSampler());
+        const std::uint32_t textureIndex = FindBindingIndex(desc.bindings, combinedDesc->textureName, ResourceType::Texture);
+        if (textureIndex == ~0u)
+        {
+            Log::Errorf("texture binding '%s' of combined texture-sampler '%s' not found\n", combinedDesc->textureName.c_str(), combinedDesc->name.c_str());
+            return false;
+        }
 
-    return &(combinedImmutableSamplers_[first]);
+        /* Replace texture by combined image sampler at the slot of the combined texture-sampler and remove the sampler */
+        outBindings = desc.bindings;
+        {
+            BindingDescriptor& combinedBinding = outBindings[textureIndex];
+            combinedBinding.slot        = combinedDesc->slot;
+            combinedBinding.stageFlags  |= samplerBinding.stageFlags;
+            combinedBinding.bindFlags   |= BindFlags::SamplerYcbcrConversion;
+        }
+        outBindings.erase(outBindings.begin() + samplerIndex);
+
+        ycbcrTextureDescriptor_ = textureIndex;
+        ycbcrSamplerDescriptor_ = static_cast<std::uint32_t>(samplerIndex);
+        ycbcrSetLayoutBinding_  = (textureIndex > samplerIndex ? textureIndex - 1 : textureIndex);
+
+        /* Only one Y'CbCr combined texture-sampler is supported per layout */
+        return true;
+    }
+    return false;
+}
+
+void VKPipelineLayout::InsertYcbcrVirtualBinding()
+{
+    /* Individual bindings have exactly one descriptor, so the descriptor index equals the binding index */
+    LLGL_ASSERT(ycbcrSamplerDescriptor_ <= bindingTable_.dynamicBindings.size());
+    VKLayoutBinding virtualBinding = {};
+    {
+        virtualBinding.dstBinding       = ~0u;
+        virtualBinding.dstArrayElement  = 0;
+        virtualBinding.barrierSlot      = ~0u;
+        virtualBinding.descriptorType   = VK_DESCRIPTOR_TYPE_MAX_ENUM;
+        virtualBinding.stageFlags       = 0;
+        virtualBinding.bindFlags        = 0;
+    }
+    bindingTable_.dynamicBindings.insert(bindingTable_.dynamicBindings.begin() + ycbcrSamplerDescriptor_, virtualBinding);
 }
 
 void VKPipelineLayout::AllocateDescriptorBarriers(std::vector<VKLayoutBinding>& bindings)
@@ -610,7 +697,7 @@ void VKPipelineLayout::CreateStaticDescriptorSet(VkDevice device, VkDescriptorSe
     VKThrowIfFailed(result, "failed to allocate Vulkan descriptor sets");
 }
 
-void VKPipelineLayout::BuildDescriptorSetBindingTables(const PipelineLayoutDescriptor& desc)
+void VKPipelineLayout::BuildDescriptorSetBindingTables(const PipelineLayoutDescriptor& desc, const std::vector<BindingDescriptor>& dynamicBindings)
 {
     /* Assign binding slots for all descrioptor set layouts, i.e. 'layout(set = N)' in SPIR-V code */
     VkDescriptorSetLayout setLayoutsVK[SetLayoutType_Num] =
@@ -631,7 +718,7 @@ void VKPipelineLayout::BuildDescriptorSetBindingTables(const PipelineLayoutDescr
 
     /* Build binding table slots */
     BuildDescriptorSetBindingSlots(setBindingTables_[SetLayoutType_HeapBindings], desc.heapBindings);
-    BuildDescriptorSetBindingSlots(setBindingTables_[SetLayoutType_DynamicBindings], desc.bindings);
+    BuildDescriptorSetBindingSlots(setBindingTables_[SetLayoutType_DynamicBindings], dynamicBindings);
     BuildDescriptorSetBindingSlots(setBindingTables_[SetLayoutType_ImmutableSamplers], desc.staticSamplers);
 }
 

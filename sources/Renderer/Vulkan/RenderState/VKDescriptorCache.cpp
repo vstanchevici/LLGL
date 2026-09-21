@@ -421,6 +421,10 @@ void VKDescriptorCache::BuildCopyDescriptors(ArrayView<VKLayoutBinding> bindings
 
     for (const VKLayoutBinding& binding : bindings)
     {
+        /* Skip virtual bindings that have no native descriptor (see VKPipelineLayout::InsertYcbcrVirtualBinding) */
+        if (binding.descriptorType == VK_DESCRIPTOR_TYPE_MAX_ENUM)
+            continue;
+
         if (groupDescType == VK_DESCRIPTOR_TYPE_MAX_ENUM)
         {
             /* Initialize first group of consecutive bindings */

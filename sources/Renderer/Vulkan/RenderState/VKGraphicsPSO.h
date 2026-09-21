@@ -10,6 +10,7 @@
 
 
 #include "VKPipelineState.h"
+#include <memory>
 
 
 namespace LLGL
@@ -41,6 +42,8 @@ class VKGraphicsPSO final : public VKPipelineState
             PipelineCache*                      pipelineCache       = nullptr
         );
 
+        ~VKGraphicsPSO();
+
         // Returns true if scissors are enabled.
         inline bool IsScissorEnabled() const
         {
@@ -53,7 +56,22 @@ class VKGraphicsPSO final : public VKPipelineState
             return hasDynamicScissor_;
         }
 
+    protected:
+
+        bool CreateVkPipelineVariant(VkPipelineLayout pipelineLayout, VKPtr<VkPipeline>& outPipeline) override;
+
     private:
+
+        struct CreateInfoStorage;
+
+    private:
+
+        bool FillCreateInfoStorage(
+            CreateInfoStorage&                  storage,
+            const VKRenderPass&                 renderPass,
+            const VKGraphicsPipelineLimits&     limits,
+            const GraphicsPipelineDescriptor&   desc
+        );
 
         bool CreateVkPipeline(
             VkDevice                            device,
@@ -65,8 +83,15 @@ class VKGraphicsPSO final : public VKPipelineState
 
     private:
 
-        bool scissorEnabled_    = false;
-        bool hasDynamicScissor_ = false;
+        bool                                scissorEnabled_     = false;
+        bool                                hasDynamicScissor_  = false;
+
+        /*
+        Native create info and render pass for pipeline variants (see VKPipelineState::HasYcbcrVariants).
+        The render pass must outlive this PSO; its native object is queried again for each variant.
+        */
+        std::unique_ptr<CreateInfoStorage>  createInfoStorage_;
+        const VKRenderPass*                 renderPass_         = nullptr;
 
 };
 

@@ -405,7 +405,9 @@ struct TextureDescriptor
     In this case, \c type must be TextureType::Texture2D, \c bindFlags must only contain BindFlags::Sampled,
     and \c extent, \c format, \c mipLevels, and \c arrayLayers are ignored as they are determined by the external image.
     Initial image data cannot be specified for external images.
-    \remarks Access to the external image must be synchronized with CommandBuffer::AcquireExternalTexture and CommandBuffer::ReleaseExternalTexture.
+    \remarks Ownership of the external image is acquired from and released to its producer implicitly when a command buffer that binds the texture is submitted.
+    The external image must be ready for reading when the command buffer is submitted, e.g. by acquiring it with <code>AImageReader_acquireLatestImage</code>
+    (which waits for the producer's fence), and it must not be returned to its producer before the command buffer has completed.
     \remarks The shader declaration of an external texture differs between backends: with Vulkan, it is sampled like a regular 2D texture,
     while OpenGLES imports \e every external image as <code>GL_TEXTURE_EXTERNAL_OES</code>, even images with a single-planar RGBA format.
     Such textures must be declared as \c samplerExternalOES in GLSL, which requires the \c GL_OES_EGL_image_external_essl3 extension.
@@ -418,7 +420,7 @@ struct TextureDescriptor
     /**
     \brief Optional Y'CbCr sampler conversion. By default null.
     \remarks This is required for multi-planar formats (see IsMultiPlanarFormat) and for external images that require a Y'CbCr conversion
-    (see ExternalImageProperties::requiresYcbcr). It must be equal to the conversion of the immutable sampler this texture is sampled with.
+    (see ExternalImageProperties::requiresYcbcr). If a sampler is bound together with this texture, it must have an equal conversion (see BindFlags::SamplerYcbcrConversion).
     \remarks The pointer is only read during the call to RenderSystem::CreateTexture and Texture::GetDesc always returns null for this member.
     \note Only supported with: Vulkan.
     \see SamplerDescriptor::ycbcrConversion

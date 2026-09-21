@@ -13,8 +13,6 @@
 #include <EGL/eglext.h>
 #include <GLES2/gl2ext.h>
 #include <android/hardware_buffer.h>
-#include <poll.h>
-#include <unistd.h>
 #include <cstring>
 
 
@@ -28,13 +26,9 @@ static PFNEGLGETNATIVECLIENTBUFFERANDROIDPROC   g_eglGetNativeClientBufferANDROI
 static PFNEGLCREATEIMAGEKHRPROC                 g_eglCreateImageKHR                 = nullptr;
 static PFNEGLDESTROYIMAGEKHRPROC                g_eglDestroyImageKHR                = nullptr;
 static PFNGLEGLIMAGETARGETTEXTURE2DOESPROC      g_glEGLImageTargetTexture2DOES      = nullptr;
-static PFNEGLCREATESYNCKHRPROC                  g_eglCreateSyncKHR                  = nullptr;
-static PFNEGLWAITSYNCKHRPROC                    g_eglWaitSyncKHR                    = nullptr;
-static PFNEGLDESTROYSYNCKHRPROC                 g_eglDestroySyncKHR                 = nullptr;
 
 static bool g_hardwareBufferProcsLoaded     = false;
 static bool g_hardwareBufferSupported       = false;
-static bool g_nativeFenceSyncSupported      = false;
 
 // Returns true if the space separated list of extension names contains the specified name.
 static bool HasExtensionName(const char* extensions, const char* name)
@@ -104,16 +98,6 @@ static void LoadHardwareBufferProcsOnce()
         LoadEGLProc(g_eglCreateImageKHR,                "eglCreateImageKHR")                &&
         LoadEGLProc(g_eglDestroyImageKHR,               "eglDestroyImageKHR")               &&
         LoadEGLProc(g_glEGLImageTargetTexture2DOES,     "glEGLImageTargetTexture2DOES")
-    );
-
-    /* Load procedures to wait on native fences on the GPU */
-    g_nativeFenceSyncSupported =
-    (
-        HasExtensionName(eglExtensions, "EGL_ANDROID_native_fence_sync")    &&
-        HasExtensionName(eglExtensions, "EGL_KHR_wait_sync")                &&
-        LoadEGLProc(g_eglCreateSyncKHR,     "eglCreateSyncKHR")             &&
-        LoadEGLProc(g_eglWaitSyncKHR,       "eglWaitSyncKHR")               &&
-        LoadEGLProc(g_eglDestroySyncKHR,    "eglDestroySyncKHR")
     );
 }
 
@@ -219,43 +203,6 @@ void AndroidGLReleaseHardwareBuffer(AHardwareBuffer* buffer)
 {
     if (buffer != nullptr)
         AHardwareBuffer_release(buffer);
-}
-
-void AndroidGLWaitNativeFence(int syncFd)
-{
-    if (syncFd < 0)
-        return;
-
-    LoadHardwareBufferProcsOnce();
-
-    if (g_nativeFenceSyncSupported)
-    {
-        /* Import sync file descriptor into EGL sync object; EGL takes ownership of the descriptor on success */
-        EGLDisplay display = eglGetCurrentDisplay();
-        const EGLint syncAttribs[] =
-        {
-            EGL_SYNC_NATIVE_FENCE_FD_ANDROID, syncFd,
-            EGL_NONE,
-        };
-        EGLSyncKHR sync = g_eglCreateSyncKHR(display, EGL_SYNC_NATIVE_FENCE_ANDROID, syncAttribs);
-        if (sync != EGL_NO_SYNC_KHR)
-        {
-            /* Make the GL server wait for the fence without blocking the CPU */
-            g_eglWaitSyncKHR(display, sync, 0);
-            g_eglDestroySyncKHR(display, sync);
-            return;
-        }
-    }
-
-    /* Fall back to waiting on the CPU */
-    struct pollfd pollFd;
-    {
-        pollFd.fd       = syncFd;
-        pollFd.events   = POLLIN;
-        pollFd.revents  = 0;
-    }
-    ::poll(&pollFd, 1, -1);
-    ::close(syncFd);
 }
 
 

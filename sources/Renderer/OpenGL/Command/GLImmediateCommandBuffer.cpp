@@ -43,10 +43,6 @@
 
 #include <cstring> // std::strlen
 
-#if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
-#   include "../Platform/Android/AndroidGLHardwareBuffer.h"
-#endif
-
 #include <LLGL/Backend/OpenGL/NativeCommand.h>
 
 
@@ -198,28 +194,6 @@ void GLImmediateCommandBuffer::CopyTextureFromFramebuffer(
         srcOffset,
         Extent2D{ dstRegion.extent.width, dstRegion.extent.height }
     );
-}
-
-/* ----- External textures ----- */
-
-void GLImmediateCommandBuffer::AcquireExternalTexture(Texture& texture, long long nativeFence)
-{
-    /*
-    The EGLImage of an external texture always refers to the latest content of its buffer,
-    so only the producer's fence has to be waited on before the texture is sampled.
-    */
-    #if LLGL_GLEXT_EGL_IMAGE_EXTERNAL
-    (void)texture;
-    if (nativeFence >= 0)
-        AndroidGLWaitNativeFence(static_cast<int>(nativeFence));
-    #else
-    CommandBuffer::AcquireExternalTexture(texture, nativeFence);
-    #endif
-}
-
-void GLImmediateCommandBuffer::ReleaseExternalTexture(Texture& /*texture*/)
-{
-    // dummy
 }
 
 void GLImmediateCommandBuffer::GenerateMips(Texture& texture)

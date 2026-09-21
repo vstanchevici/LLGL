@@ -35,10 +35,10 @@ class VKSampler final : public Sampler
         // Creates a sampler. If SamplerDescriptor::ycbcrConversion is non-null, the conversion is acquired from the specified pool.
         VKSampler(VkDevice device, const SamplerDescriptor& desc, VKYcbcrConversionPool* ycbcrConversionPool = nullptr);
 
-        // Returns the Vulkan sampler object.
+        // Returns the Vulkan sampler object. For samplers with Y'CbCr conversion, this is the canonical sampler of the conversion.
         inline VkSampler GetVkSampler() const
         {
-            return sampler_.Get();
+            return (ycbcrConversion_ ? ycbcrConversion_->GetCanonicalVkSampler() : sampler_.Get());
         }
 
         // Returns the Y'CbCr conversion of this sampler or null if this sampler has no conversion.
@@ -57,14 +57,9 @@ class VKSampler final : public Sampler
 
     private:
 
-        // Creates a native Vulkan sampler with a Y'CbCr conversion.
-        void CreateVkSamplerWithYcbcrConversion(VkDevice device, const SamplerDescriptor& desc);
-
-    private:
-
         VkDevice                device_             = VK_NULL_HANDLE;
         VKYcbcrConversionSPtr   ycbcrConversion_;
-        VKPtr<VkSampler>        sampler_;
+        VKPtr<VkSampler>        sampler_;           // Null for samplers with Y'CbCr conversion
 
 };
 

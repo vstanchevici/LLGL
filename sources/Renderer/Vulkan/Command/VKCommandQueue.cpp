@@ -17,23 +17,21 @@ namespace LLGL
 {
 
 
-VkResult VKSubmitCommandBuffer(
-    VkQueue                     commandQueue,
-    VkCommandBuffer             commandBuffer,
-    VkFence                     fence,
-    std::uint32_t               numWaitSemaphores,
-    const VkSemaphore*          waitSemaphores,
-    const VkPipelineStageFlags* waitStageMasks)
+VkResult VKSubmitCommandBuffers(
+    VkQueue                 commandQueue,
+    std::uint32_t           numCommandBuffers,
+    const VkCommandBuffer*  commandBuffers,
+    VkFence                 fence)
 {
     VkSubmitInfo submitInfo;
     {
         submitInfo.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitInfo.pNext                = nullptr;
-        submitInfo.waitSemaphoreCount   = numWaitSemaphores;
-        submitInfo.pWaitSemaphores      = waitSemaphores;
-        submitInfo.pWaitDstStageMask    = waitStageMasks;
-        submitInfo.commandBufferCount   = 1;
-        submitInfo.pCommandBuffers      = &commandBuffer;
+        submitInfo.waitSemaphoreCount   = 0;
+        submitInfo.pWaitSemaphores      = nullptr;
+        submitInfo.pWaitDstStageMask    = 0;
+        submitInfo.commandBufferCount   = numCommandBuffers;
+        submitInfo.pCommandBuffers      = commandBuffers;
         submitInfo.signalSemaphoreCount = 0;
         submitInfo.pSignalSemaphores    = nullptr;
     }

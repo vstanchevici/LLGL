@@ -105,7 +105,12 @@ std::uint32_t VKResourceHeap::WriteResourceViews(
                 FillWriteDescriptorWithSampler(desc, descriptorSet, binding, setWriter);
                 break;
 
-            case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: // Only the image view is written; the sampler is immutable
+            #if 0
+            case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+                FillWriteDescriptorWithCombinedImageSampler(device, desc, descriptorSet, binding, setWriter);
+                break;
+            #endif
+
             case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
             case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
                 FillWriteDescriptorWithImageView(device, desc, descriptorSet, binding, setWriter);
@@ -170,8 +175,7 @@ static bool IsDescriptorTypeImageView(VkDescriptorType type)
 {
     return
     (
-        type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
-        type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE          ||
+        type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ||
         type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
     );
 }

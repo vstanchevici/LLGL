@@ -18,12 +18,22 @@ struct YcbcrColor8
     std::uint8_t y, cb, cr;
 };
 
-// Converts the specified narrow-range BT.709 Y'CbCr color into 8-bit RGB (see Vulkan specification, "Color Model Conversion").
-static void ConvertNarrowBT709ToRGB(const YcbcrColor8& src, bool sRGB, int (&dst)[3])
+// Converts the specified BT.709 Y'CbCr color into 8-bit RGB (see Vulkan specification, "Color Model Conversion" and "Range Expansion").
+static void ConvertBT709ToRGB(const YcbcrColor8& src, YcbcrRange range, bool sRGB, int (&dst)[3])
 {
-    const float y   = (static_cast<float>(src.y ) -  16.0f) / 219.0f;
-    const float cb  = (static_cast<float>(src.cb) - 128.0f) / 224.0f;
-    const float cr  = (static_cast<float>(src.cr) - 128.0f) / 224.0f;
+    float y, cb, cr;
+    if (range == YcbcrRange::Narrow)
+    {
+        y   = (static_cast<float>(src.y ) -  16.0f) / 219.0f;
+        cb  = (static_cast<float>(src.cb) - 128.0f) / 224.0f;
+        cr  = (static_cast<float>(src.cr) - 128.0f) / 224.0f;
+    }
+    else
+    {
+        y   = static_cast<float>(src.y) / 255.0f;
+        cb  = (static_cast<float>(src.cb) - 128.0f) / 255.0f;
+        cr  = (static_cast<float>(src.cr) - 128.0f) / 255.0f;
+    }
 
     const float Kr = 0.2126f;
     const float Kb = 0.0722f;
@@ -48,9 +58,13 @@ static void ConvertNarrowBT709ToRGB(const YcbcrColor8& src, bool sRGB, int (&dst
 
 /*
 Creates NV12 textures with four quadrants of constant Y'CbCr values and samples them with a Y'CbCr sampler conversion
-via an immutable combined texture-sampler (see BindingDescriptor::immutableSampler).
-The left texture is initialized on creation and the right texture is written via RenderSystem::WriteTexture().
-The framebuffer is read back and the center of each quadrant is compared against the expected RGB color of the narrow-range BT.709 conversion.
+via the standard texture and sampler bindings, where the sampler binding has the BindFlags::SamplerYcbcrConversion flag.
+The framebuffer is split into three columns:
+ - A: Narrow-range texture that is initialized on creation.
+ - B: Narrow-range texture that is written via RenderSystem::WriteTexture().
+ - C: Full-range texture, i.e. a different conversion, which requires another pipeline variant within the same render pass.
+A uniform is set before any texture is bound, i.e. before the pipeline variant is known, and must still be applied to all draw calls.
+The framebuffer is read back and the center of each quadrant is compared against the expected RGB color of the BT.709 conversion.
 */
 DEF_TEST( YcbcrTexture )
 {
@@ -110,32 +124,47 @@ DEF_TEST( YcbcrTexture )
 
     const ImageView imageView{ ImageFormat::Compressed, DataType::UInt8, imageData.data(), imageData.size() };
 
-    // Create sampler with Y'CbCr conversion
-    YcbcrConversionDescriptor ycbcrDesc;
+    // Create Y'CbCr conversions for narrow and full range
+    YcbcrConversionDescriptor ycbcrNarrowDesc;
     {
-        ycbcrDesc.format        = Format::NV12;
-        ycbcrDesc.model         = YcbcrModel::Ycbcr709;
-        ycbcrDesc.range         = YcbcrRange::Narrow;
-        ycbcrDesc.chromaFilter  = SamplerFilter::Linear;
+        ycbcrNarrowDesc.format          = Format::NV12;
+        ycbcrNarrowDesc.model           = YcbcrModel::Ycbcr709;
+        ycbcrNarrowDesc.range           = YcbcrRange::Narrow;
+        ycbcrNarrowDesc.chromaFilter    = SamplerFilter::Linear;
     }
+    YcbcrConversionDescriptor ycbcrFullDesc = ycbcrNarrowDesc;
+    {
+        ycbcrFullDesc.range             = YcbcrRange::Full;
+    }
+
+    // Create sampler with Y'CbCr conversion; this is optional for binding, but validates that sampler and texture have the same conversion
     SamplerDescriptor samplerDesc;
     {
         samplerDesc.addressModeU    = SamplerAddressMode::Clamp;
         samplerDesc.addressModeV    = SamplerAddressMode::Clamp;
         samplerDesc.addressModeW    = SamplerAddressMode::Clamp;
         samplerDesc.mipMapEnabled   = false;
-        samplerDesc.ycbcrConversion = &ycbcrDesc;
+        samplerDesc.ycbcrConversion = &ycbcrNarrowDesc;
     }
-    Sampler* ycbcrSampler = renderer->CreateSampler(samplerDesc);
+    Sampler* ycbcrNarrowSampler = renderer->CreateSampler(samplerDesc);
 
-    // Create PSO layout with immutable sampler for combined texture-sampler
-    BindingDescriptor texBinding{ "ycbcrMap", ResourceType::Texture, BindFlags::Sampled, StageFlags::FragmentStage, 0u };
-    texBinding.immutableSampler = ycbcrSampler;
-
+    // Create PSO layout with standard texture and sampler bindings that are combined into one texture-sampler
     PipelineLayoutDescriptor psoLayoutDesc;
     {
         psoLayoutDesc.debugName = "psoLayoutYcbcrTexture";
-        psoLayoutDesc.bindings  = { texBinding };
+        psoLayoutDesc.bindings  =
+        {
+            BindingDescriptor{ "ycbcrMap",     ResourceType::Texture, BindFlags::Sampled,                StageFlags::FragmentStage, BindingSlot(0) },
+            BindingDescriptor{ "ycbcrSampler", ResourceType::Sampler, BindFlags::SamplerYcbcrConversion, StageFlags::FragmentStage, BindingSlot(1) },
+        };
+        psoLayoutDesc.combinedTextureSamplers =
+        {
+            CombinedTextureSamplerDescriptor{ "ycbcrMap", "ycbcrMap", "ycbcrSampler", BindingSlot(0) },
+        };
+        psoLayoutDesc.uniforms =
+        {
+            UniformDescriptor{ "colorScale", UniformType::Float4 },
+        };
     }
     PipelineLayout* psoLayout = renderer->CreatePipelineLayout(psoLayoutDesc);
 
@@ -158,7 +187,7 @@ DEF_TEST( YcbcrTexture )
         texDesc.format          = Format::NV12;
         texDesc.extent          = Extent3D{ texSize, texSize, 1 };
         texDesc.mipLevels       = 1;
-        texDesc.ycbcrConversion = &ycbcrDesc;
+        texDesc.ycbcrConversion = &ycbcrNarrowDesc;
     }
     CREATE_TEXTURE(texNV12_A, texDesc, "texNV12_A", &imageView);
 
@@ -173,11 +202,31 @@ DEF_TEST( YcbcrTexture )
     CREATE_TEXTURE(texNV12_B, texDesc, "texNV12_B", nullptr);
     renderer->WriteTexture(*texNV12_B, TextureRegion{ Offset3D{}, Extent3D{ texSize, texSize, 1 } }, imageView);
 
-    // Render both textures side by side
+    // Create third NV12 texture with full-range conversion
+    texDesc.miscFlags       = 0;
+    texDesc.ycbcrConversion = &ycbcrFullDesc;
+    CREATE_TEXTURE(texNV12_C, texDesc, "texNV12_C", &imageView);
+
+    // Render all textures side by side; the conversion of each texture selects the pipeline variant
     Texture* readbackTex = nullptr;
 
     const Extent2D resolution = swapChain->GetResolution();
-    const Extent2D halfResolution{ resolution.width / 2, resolution.height };
+    const Extent2D columnResolution{ resolution.width / 3, resolution.height };
+
+    struct Column
+    {
+        Texture*    texture;
+        Sampler*    sampler;
+        YcbcrRange  range;
+        const char* name;
+    };
+
+    const Column columns[3] =
+    {
+        { texNV12_A, ycbcrNarrowSampler, YcbcrRange::Narrow, "A" },
+        { texNV12_B, nullptr,            YcbcrRange::Narrow, "B" },
+        { texNV12_C, nullptr,            YcbcrRange::Full,   "C" },
+    };
 
     BEGIN();
     {
@@ -188,13 +237,17 @@ DEF_TEST( YcbcrTexture )
             cmdBuffer->Clear(ClearFlags::Color, ClearValue{ 0.0f, 1.0f, 0.0f, 1.0f });
             cmdBuffer->SetPipelineState(*pso);
 
-            cmdBuffer->SetViewport(Viewport{ Offset2D{ 0, 0 }, halfResolution });
-            cmdBuffer->SetResource(0, *texNV12_A);
-            cmdBuffer->Draw(3, 0);
+            const float colorScale[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+            cmdBuffer->SetUniforms(0, colorScale, sizeof(colorScale));
 
-            cmdBuffer->SetViewport(Viewport{ Offset2D{ static_cast<std::int32_t>(halfResolution.width), 0 }, halfResolution });
-            cmdBuffer->SetResource(0, *texNV12_B);
-            cmdBuffer->Draw(3, 0);
+            for (std::uint32_t i = 0; i < 3; ++i)
+            {
+                cmdBuffer->SetViewport(Viewport{ Offset2D{ static_cast<std::int32_t>(i * columnResolution.width), 0 }, columnResolution });
+                cmdBuffer->SetResource(0, *columns[i].texture);
+                if (columns[i].sampler != nullptr)
+                    cmdBuffer->SetResource(1, *columns[i].sampler);
+                cmdBuffer->Draw(3, 0);
+            }
 
             readbackTex = CaptureFramebuffer(*cmdBuffer, swapChain->GetColorFormat(), resolution);
         }
@@ -218,23 +271,23 @@ DEF_TEST( YcbcrTexture )
     // Save capture for inspection; this also releases the readback texture
     SaveCapture(readbackTex, "YcbcrTexture");
 
-    // Compare center of each quadrant for both textures
+    // Compare center of each quadrant for all textures
     const bool isSRGB = ((GetFormatAttribs(swapChain->GetColorFormat()).flags & FormatFlags::IsColorSpace_sRGB) != 0);
     constexpr int threshold = 6;
 
     TestResult result = TestResult::Passed;
 
-    for (std::uint32_t half = 0; half < 2; ++half)
+    for (std::uint32_t column = 0; column < 3; ++column)
     {
         for (std::uint32_t quadrant = 0; quadrant < 4; ++quadrant)
         {
-            const std::uint32_t x = half*halfResolution.width + (quadrant % 2 == 0 ? 1 : 3) * halfResolution.width / 4;
+            const std::uint32_t x = column*columnResolution.width + (quadrant % 2 == 0 ? 1 : 3) * columnResolution.width / 4;
             const std::uint32_t y = (quadrant / 2 == 0 ? 1 : 3) * resolution.height / 4;
 
             const std::uint8_t* actual = &pixels[(y*resolution.width + x)*4];
 
             int expected[3];
-            ConvertNarrowBT709ToRGB(quadrantColors[quadrant], isSRGB, expected);
+            ConvertBT709ToRGB(quadrantColors[quadrant], columns[column].range, isSRGB, expected);
 
             for (int c = 0; c < 3; ++c)
             {
@@ -242,7 +295,7 @@ DEF_TEST( YcbcrTexture )
                 {
                     Log::Errorf(
                         "Mismatch in Y'CbCr texture %s, quadrant %u, at pixel (%u, %u): expected RGB (%d, %d, %d), but got (%d, %d, %d)\n",
-                        (half == 0 ? "A" : "B"), quadrant, x, y,
+                        columns[column].name, quadrant, x, y,
                         expected[0], expected[1], expected[2],
                         static_cast<int>(actual[0]), static_cast<int>(actual[1]), static_cast<int>(actual[2])
                     );
@@ -256,9 +309,11 @@ DEF_TEST( YcbcrTexture )
     // Clear resources
     renderer->Release(*texNV12_A);
     renderer->Release(*texNV12_B);
+    renderer->Release(*texNV12_C);
     renderer->Release(*pso);
     renderer->Release(*psoLayout);
-    renderer->Release(*ycbcrSampler);
+    renderer->Release(*ycbcrNarrowSampler);
 
     return result;
 }
+

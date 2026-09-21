@@ -33,6 +33,8 @@ class VKQueryHeap;
 class VKSwapChain;
 class VKPipelineState;
 class VKPipelineBarrier;
+class VKTexture;
+struct VKYcbcrPipelineVariant;
 
 class VKCommandBuffer final : public CommandBuffer
 {
@@ -60,12 +62,11 @@ class VKCommandBuffer final : public CommandBuffer
         // i.e. it won't need another signal for the next submission.
         VkFence GetQueueSubmitFenceAndFlush();
 
-        // Submits the current native command buffer to the specified queue.
-        // The submission waits on all semaphores that were imported by AcquireExternalTexture since the last submission.
+        /*
+        Submits the current native command buffer to the specified queue.
+        If external textures were bound, the prologue command buffer that acquires them from their external producer is submitted in the same batch.
+        */
         VkResult SubmitToQueue(VkQueue queue);
-
-        void AcquireExternalTexture(Texture& texture, long long nativeFence) override;
-        void ReleaseExternalTexture(Texture& texture) override;
 
         // Returns the native VkCommandBuffer object.
         inline VkCommandBuffer GetVkCommandBuffer() const
@@ -130,6 +131,33 @@ class VKCommandBuffer final : public CommandBuffer
         void FlushDescriptorCache();
         void SubmitAutoPipelineBarrier();
 
+        // Flushes the descriptor cache and submits the automatic pipeline barrier. Returns false if no native pipeline is bound.
+        bool PrepareDrawOrDispatch();
+
+        /*
+        Handles SetResource for a PSO with Y'CbCr variants (see BindFlags::SamplerYcbcrConversion):
+        Resources are recorded, so they can be written to the descriptor cache of another variant, and the variant is resolved when the texture is bound.
+        Returns true if the resource must be written to the current descriptor cache.
+        */
+        bool SetYcbcrPipelineResource(std::uint32_t descriptor, Resource& resource);
+
+        // Binds the specified pipeline variant and writes all recorded resources to its descriptor cache.
+        void BindYcbcrPipelineVariant(const VKYcbcrPipelineVariant& variant);
+
+        // Records the specified resource for the Y'CbCr variants of the bound PSO, replacing any previous resource for the same descriptor.
+        void RecordYcbcrBoundResource(std::uint32_t descriptor, Resource& resource);
+
+        void ResetYcbcrBindingStates();
+
+        // Remembers the specified external texture, so its ownership is transferred when this command buffer is submitted.
+        void TrackExternalTexture(VKTexture& textureVK);
+
+        // Records barriers at the end of this command buffer that release ownership of all external textures to their producer.
+        void RecordExternalTextureReleaseBarriers();
+
+        // Records the prologue command buffer that acquires ownership of all external textures from their producer.
+        void RecordExternalTextureAcquirePrologue();
+
         // Acquires the next native VkCommandBuffer object.
         void AcquireNextBuffer();
 
@@ -141,9 +169,6 @@ class VKCommandBuffer final : public CommandBuffer
         #endif
 
         void BindVertexBuffer(VKBuffer& bufferVK);
-
-        // Makes the next submission wait on the specified sync file descriptor. Ownership of the descriptor is transferred.
-        void ImportWaitSemaphoreFromSyncFd(int syncFd);
 
         // Returns the queue family index for ownership transfers of external resources.
         std::uint32_t GetExternalQueueFamilyIndex() const;
@@ -212,9 +237,9 @@ class VKCommandBuffer final : public CommandBuffer
         std::uint32_t                   queuePresentFamily_                             = 0;
         std::uint32_t                   queueGraphicsFamily_                            = 0;
 
-        std::vector<VKPtr<VkSemaphore>> waitSemaphoresArray_[maxNumCommandBuffers];     // Semaphores in flight for each native command buffer
-        std::vector<VkSemaphore>        pendingWaitSemaphores_;                         // Semaphores the next submission must wait on
-        std::vector<VkPipelineStageFlags> pendingWaitStageMasks_;
+        VkCommandBuffer                 prologueBufferArray_[maxNumCommandBuffers]      = {}; // Acquires external textures; allocated on demand
+        bool                            prologueRecorded_[maxNumCommandBuffers]         = {};
+        std::vector<VKTexture*>         externalTextures_;                                  // External textures bound since Begin()
 
         bool                            scissorEnabled_                                 = false;
         bool                            hasDynamicScissorRect_                          = false;
@@ -222,6 +247,27 @@ class VKCommandBuffer final : public CommandBuffer
         const VKLayoutBindingTable*     boundBindingTable_                              = nullptr;
         VKPipelineState*                boundPipelineState_                             = nullptr;
         VKPipelineBarrier*              boundPipelineBarrier_                           = nullptr;
+        VkPipelineLayout                boundPipelineLayout_                            = VK_NULL_HANDLE; // Layout of the bound native pipeline; null while a Y'CbCr variant is pending
+
+        struct YcbcrBoundResource
+        {
+            std::uint32_t   descriptor;
+            Resource*       resource;
+        };
+
+        struct YcbcrPendingUniforms
+        {
+            std::uint32_t   first;
+            std::uint32_t   offset; // Offset into ycbcrPendingUniformData_
+            std::uint32_t   size;
+        };
+
+        // States of a PSO with Y'CbCr variants (see VKPipelineState::HasYcbcrVariants).
+        const VKYcbcrPipelineVariant*       boundYcbcrVariant_                          = nullptr;
+        std::vector<YcbcrBoundResource>     ycbcrBoundResources_;                           // Resources bound since SetPipelineState
+        VkDescriptorSet                     ycbcrHeapDescriptorSet_                     = VK_NULL_HANDLE;
+        std::vector<YcbcrPendingUniforms>   ycbcrPendingUniforms_;                          // Uniforms set before the variant was resolved
+        std::vector<char>                   ycbcrPendingUniformData_;
 
         std::uint32_t                   maxDrawIndirectCount_                           = 0;
 

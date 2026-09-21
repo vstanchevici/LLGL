@@ -26,6 +26,8 @@ namespace LLGL
 {
 
 
+class VKYcbcrConversion;
+
 // Implementation of the PipelineLayout interface for the Vulkan backend.
 // This class acts as a template for permutations of pipeline layouts rather than wrapping the native VkPipelineLayout directly (see VKPipelineLayoutPermutation).
 class VKPipelineLayout final : public PipelineLayout
@@ -51,6 +53,30 @@ class VKPipelineLayout final : public PipelineLayout
             VkDevice                            device,
             const ArrayView<Shader*>&           shaders,
             std::vector<VkPushConstantRange>&   outUniformRanges
+        ) const;
+
+        /*
+        Builds the parameters for a permutation of this pipeline layout for the specified shaders with push constants and texel buffers.
+        Returns false if no permutation is required. In that case, the output parameters are undefined, but the uniform ranges are still built.
+        */
+        bool BuildPermutationParams(
+            const ArrayView<Shader*>&           shaders,
+            VKLayoutPermutationParameters&      outParams,
+            std::vector<VkPushConstantRange>&   outUniformRanges
+        ) const;
+
+        // Returns the permutation parameters that are equivalent to this pipeline layout without any permutation.
+        void GetDefaultPermutationParams(VKLayoutPermutationParameters& outParams) const;
+
+        /*
+        Creates a permutation of this pipeline layout where the combined texture-sampler with Y'CbCr conversion (see BindFlags::SamplerYcbcrConversion)
+        has the canonical sampler of the specified conversion as immutable sampler. The base parameters come from either
+        BuildPermutationParams or GetDefaultPermutationParams. The conversion must outlive the returned permutation.
+        */
+        VKPipelineLayoutPermutationSPtr CreateYcbcrPermutation(
+            VkDevice                                device,
+            const VKLayoutPermutationParameters&    baseParams,
+            const VKYcbcrConversion&                conversion
         ) const;
 
         // Returns true if a permutation is required for the specified shader.
@@ -131,6 +157,27 @@ class VKPipelineLayout final : public PipelineLayout
             return ((flags_ & PSOLayoutFlag_HasNonUniformBuffers) != 0);
         }
 
+        /*
+        Returns true if this layout has a combined texture-sampler with Y'CbCr conversion (see BindFlags::SamplerYcbcrConversion).
+        Such a layout is only a template: each Y'CbCr conversion requires a layout permutation with its own immutable sampler.
+        */
+        inline bool HasYcbcrBinding() const
+        {
+            return (ycbcrTextureDescriptor_ != ~0u);
+        }
+
+        // Returns the descriptor index of the texture of the Y'CbCr combined texture-sampler, or ~0u if there is none.
+        inline std::uint32_t GetYcbcrTextureDescriptor() const
+        {
+            return ycbcrTextureDescriptor_;
+        }
+
+        // Returns the descriptor index of the sampler of the Y'CbCr combined texture-sampler, or ~0u if there is none. This is a virtual descriptor without native binding.
+        inline std::uint32_t GetYcbcrSamplerDescriptor() const
+        {
+            return ycbcrSamplerDescriptor_;
+        }
+
     public:
 
         // Creates the default VkPipelineLayout object.
@@ -180,11 +227,15 @@ class VKPipelineLayout final : public PipelineLayout
 
         void AllocateDescriptorBarriers(std::vector<VKLayoutBinding>& bindings);
 
-        // Reserves storage for all immutable samplers of combined texture-samplers (see BindingDescriptor::immutableSampler).
-        void ReserveCombinedImmutableSamplers(const PipelineLayoutDescriptor& desc);
+        /*
+        Resolves the combined texture-sampler with Y'CbCr conversion (see BindFlags::SamplerYcbcrConversion).
+        Returns true if there is one, in which case the output contains the individual bindings for the native descriptor set layout:
+        The texture is replaced by a combined image sampler at the slot of the combined texture-sampler and the sampler is removed.
+        */
+        bool ResolveYcbcrBindings(const PipelineLayoutDescriptor& desc, std::vector<BindingDescriptor>& outBindings);
 
-        // Appends the immutable samplers for the specified binding and returns a pointer to them, or null if the binding has no immutable sampler.
-        const VkSampler* AppendCombinedImmutableSamplers(const BindingDescriptor& binding);
+        // Inserts the virtual binding for the sampler of the Y'CbCr combined texture-sampler, so descriptor indices match PipelineLayoutDescriptor::bindings.
+        void InsertYcbcrVirtualBinding();
 
         void CreateImmutableSamplers(
             VkDevice                                    device,
@@ -200,7 +251,7 @@ class VKPipelineLayout final : public PipelineLayout
         void CreateDescriptorCache(VkDevice device, VkDescriptorSetLayout setLayout);
         void CreateStaticDescriptorSet(VkDevice device, VkDescriptorSetLayout setLayout);
 
-        void BuildDescriptorSetBindingTables(const PipelineLayoutDescriptor& desc);
+        void BuildDescriptorSetBindingTables(const PipelineLayoutDescriptor& desc, const std::vector<BindingDescriptor>& dynamicBindings);
 
         bool GetBindingSlotsAssignment(
             unsigned                                index,
@@ -232,10 +283,13 @@ class VKPipelineLayout final : public PipelineLayout
 
         VKLayoutBindingTable                bindingTable_;
         std::vector<VKPtr<VkSampler>>       immutableSamplers_;
-        std::vector<VkSampler>              combinedImmutableSamplers_; // Weak references to samplers of combined texture-samplers; referenced by VkDescriptorSetLayoutBinding::pImmutableSamplers
         std::vector<UniformDescriptor>      uniformDescs_;
 
         VKPipelineBarrierPtr                barrier_;
+
+        std::uint32_t                       ycbcrTextureDescriptor_     = ~0u;  // Index into bindingTable_.dynamicBindings
+        std::uint32_t                       ycbcrSamplerDescriptor_     = ~0u;  // Index into bindingTable_.dynamicBindings (virtual binding)
+        std::uint32_t                       ycbcrSetLayoutBinding_      = ~0u;  // Index into the bindings of setLayoutDynamicBindings_
 
         long                                barrierFlags_   : 2; // BarrierFlags
         long                                flags_          : 1; // PSOLayoutFlags

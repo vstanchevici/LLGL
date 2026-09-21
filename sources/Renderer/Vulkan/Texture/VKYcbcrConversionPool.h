@@ -68,10 +68,30 @@ class VKYcbcrConversion
             return hasSeparateReconstructionFilter_;
         }
 
+        /*
+        Returns the canonical sampler of this conversion. All Y'CbCr samplers are equivalent for a given conversion
+        (clamp-to-edge, no MIP-maps or anisotropy), so this sampler is used as immutable sampler for all combined texture-samplers with this conversion.
+        */
+        inline VkSampler GetCanonicalVkSampler() const
+        {
+            return canonicalSampler_;
+        }
+
+        // Returns the address of the canonical sampler, e.g. for VkDescriptorSetLayoutBinding::pImmutableSamplers. It remains valid for the lifetime of this conversion.
+        inline const VkSampler* GetCanonicalVkSamplerAddress() const
+        {
+            return &canonicalSampler_;
+        }
+
+    private:
+
+        void CreateCanonicalSampler(bool supportsLinearFilter);
+
     private:
 
         VkDevice                    device_                             = VK_NULL_HANDLE;
         VkSamplerYcbcrConversion    conversion_                         = VK_NULL_HANDLE;
+        VkSampler                   canonicalSampler_                   = VK_NULL_HANDLE;
         YcbcrConversionDescriptor   desc_;
         VkFormat                    format_                             = VK_FORMAT_UNDEFINED;
         VkFilter                    chromaFilter_                       = VK_FILTER_NEAREST;

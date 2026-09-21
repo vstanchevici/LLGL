@@ -39,8 +39,6 @@ LLGL_C_EXPORT void llglSetIndexBufferExt(LLGLBuffer buffer, LLGLFormat format, u
 LLGL_C_EXPORT void llglSetResourceHeap(LLGLResourceHeap resourceHeap, uint32_t descriptorSet);
 LLGL_C_EXPORT void llglSetResource(uint32_t descriptor, LLGLResource resource);
 LLGL_C_EXPORT void llglResourceBarrier(uint32_t numBuffers, const LLGLBuffer* buffers, uint32_t numTextures, const LLGLTexture* textures);
-LLGL_C_EXPORT void llglAcquireExternalTexture(LLGLTexture texture, int64_t nativeFence);
-LLGL_C_EXPORT void llglReleaseExternalTexture(LLGLTexture texture);
 LLGL_C_EXPORT void llglBeginRenderPass(LLGLRenderTarget renderTarget);
 LLGL_C_EXPORT void llglBeginRenderPassWithClear(LLGLRenderTarget renderTarget, LLGLRenderPass renderPass, uint32_t numClearValues, const LLGLClearValue* clearValues LLGL_ANNOTATE([numClearValues]), uint32_t swapBufferIndex);
 LLGL_C_EXPORT void llglEndRenderPass();

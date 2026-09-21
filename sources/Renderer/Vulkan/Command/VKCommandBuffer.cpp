@@ -31,11 +31,7 @@
 #include <LLGL/TypeInfo.h>
 #include <LLGL/Log.h>
 #include <cstddef>
-
-#if defined LLGL_OS_ANDROID || defined LLGL_OS_LINUX
-#   include <poll.h>
-#   include <unistd.h>
-#endif
+#include <algorithm>
 
 #include <LLGL/Backend/Vulkan/NativeHandle.h>
 
@@ -109,6 +105,11 @@ VKCommandBuffer::VKCommandBuffer(
 VKCommandBuffer::~VKCommandBuffer()
 {
     vkFreeCommandBuffers(device_, commandPool_, numCommandBuffers_, commandBufferArray_);
+    for (VkCommandBuffer prologue : prologueBufferArray_)
+    {
+        if (prologue != VK_NULL_HANDLE)
+            vkFreeCommandBuffers(device_, commandPool_, 1, &prologue);
+    }
 }
 
 VkFence VKCommandBuffer::GetQueueSubmitFenceAndFlush()
@@ -125,20 +126,15 @@ VkFence VKCommandBuffer::GetQueueSubmitFenceAndFlush()
 
 VkResult VKCommandBuffer::SubmitToQueue(VkQueue queue)
 {
-    VkResult result = VKSubmitCommandBuffer(
-        queue,
-        commandBuffer_,
-        GetQueueSubmitFenceAndFlush(),
-        static_cast<std::uint32_t>(pendingWaitSemaphores_.size()),
-        pendingWaitSemaphores_.data(),
-        pendingWaitStageMasks_.data()
-    );
+    /* Submit prologue that acquires external textures in the same batch, so its barriers are ordered before the commands of this buffer */
+    VkCommandBuffer commandBuffers[2];
+    std::uint32_t numCommandBuffers = 0;
 
-    /* Semaphores are only waited on once; they are kept alive until the recording fence of this native command buffer is signaled */
-    pendingWaitSemaphores_.clear();
-    pendingWaitStageMasks_.clear();
+    if (prologueRecorded_[commandBufferIndex_])
+        commandBuffers[numCommandBuffers++] = prologueBufferArray_[commandBufferIndex_];
+    commandBuffers[numCommandBuffers++] = commandBuffer_;
 
-    return result;
+    return VKSubmitCommandBuffers(queue, numCommandBuffers, commandBuffers, GetQueueSubmitFenceAndFlush());
 }
 
 /* ----- Encoding ----- */
@@ -189,6 +185,16 @@ void VKCommandBuffer::Begin()
 
 void VKCommandBuffer::End()
 {
+    /*
+    Transfer ownership of external textures back to their producer at the end of this command buffer and record the prologue to acquire them.
+    Secondary command buffers pass their external textures to the primary command buffer (see Execute).
+    */
+    if (!externalTextures_.empty() && !IsSecondaryCmdBuffer())
+    {
+        RecordExternalTextureReleaseBarriers();
+        RecordExternalTextureAcquirePrologue();
+    }
+
     /* End encoding of current command buffer */
     VkResult result = vkEndCommandBuffer(commandBuffer_);
     VKThrowIfFailed(result, "failed to end Vulkan command buffer");
@@ -211,6 +217,10 @@ void VKCommandBuffer::Execute(CommandBuffer& secondaryCommandBuffer)
     auto& cmdBufferVK = LLGL_CAST(VKCommandBuffer&, secondaryCommandBuffer);
     VkCommandBuffer cmdBuffers[] = { cmdBufferVK.GetVkCommandBuffer() };
     vkCmdExecuteCommands(commandBuffer_, 1, cmdBuffers);
+
+    /* Ownership of external textures is transferred by the primary command buffer */
+    for (VKTexture* textureVK : cmdBufferVK.externalTextures_)
+        TrackExternalTexture(*textureVK);
 }
 
 /* ----- Blitting ----- */
@@ -625,84 +635,6 @@ static constexpr VkPipelineStageFlags g_externalTextureStageMask =
     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
 );
 
-void VKCommandBuffer::AcquireExternalTexture(Texture& texture, long long nativeFence)
-{
-    auto& textureVK = LLGL_CAST(VKTexture&, texture);
-
-    /* Make the submission wait on the producer's fence; the acquire barrier below chains with this semaphore wait via the stage mask */
-    if (nativeFence >= 0)
-        ImportWaitSemaphoreFromSyncFd(static_cast<int>(nativeFence));
-
-    if (!textureVK.IsExternal())
-        return;
-
-    /*
-    Queue family ownership transfers are illegal inside a render pass. Splitting the render pass here would silently
-    store and load all attachments, which is expensive on tile-based GPUs, so the barrier is skipped instead.
-    */
-    if (IsInsideRenderPass())
-    {
-        Log::Errorf("cannot acquire external texture inside a render pass; record CommandBuffer::AcquireExternalTexture before BeginRenderPass\n");
-        return;
-    }
-
-    VkImageMemoryBarrier barrier;
-    {
-        barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.pNext                           = nullptr;
-        barrier.srcAccessMask                   = 0; // Ignored for acquire operations
-        barrier.dstAccessMask                   = VK_ACCESS_SHADER_READ_BIT;
-        barrier.oldLayout                       = VK_IMAGE_LAYOUT_GENERAL; // Not UNDEFINED, since that would allow the implementation to discard the content
-        barrier.newLayout                       = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        barrier.srcQueueFamilyIndex             = GetExternalQueueFamilyIndex();
-        barrier.dstQueueFamilyIndex             = queueGraphicsFamily_;
-        barrier.image                           = textureVK.GetVkImage();
-        barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-        barrier.subresourceRange.baseMipLevel   = 0;
-        barrier.subresourceRange.levelCount     = 1;
-        barrier.subresourceRange.baseArrayLayer = 0;
-        barrier.subresourceRange.layerCount     = 1;
-    }
-    vkCmdPipelineBarrier(commandBuffer_, g_externalTextureStageMask, g_externalTextureStageMask, 0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    textureVK.OverrideVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-}
-
-void VKCommandBuffer::ReleaseExternalTexture(Texture& texture)
-{
-    auto& textureVK = LLGL_CAST(VKTexture&, texture);
-    if (!textureVK.IsExternal())
-        return;
-
-    /* Transfer ownership back to the external producer; see AcquireExternalTexture for why this is not allowed inside a render pass */
-    if (IsInsideRenderPass())
-    {
-        Log::Errorf("cannot release external texture inside a render pass; record CommandBuffer::ReleaseExternalTexture after EndRenderPass\n");
-        return;
-    }
-
-    VkImageMemoryBarrier barrier;
-    {
-        barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.pNext                           = nullptr;
-        barrier.srcAccessMask                   = VK_ACCESS_SHADER_READ_BIT;
-        barrier.dstAccessMask                   = 0; // Ignored for release operations
-        barrier.oldLayout                       = textureVK.GetVkImageLayout();
-        barrier.newLayout                       = VK_IMAGE_LAYOUT_GENERAL;
-        barrier.srcQueueFamilyIndex             = queueGraphicsFamily_;
-        barrier.dstQueueFamilyIndex             = GetExternalQueueFamilyIndex();
-        barrier.image                           = textureVK.GetVkImage();
-        barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-        barrier.subresourceRange.baseMipLevel   = 0;
-        barrier.subresourceRange.levelCount     = 1;
-        barrier.subresourceRange.baseArrayLayer = 0;
-        barrier.subresourceRange.layerCount     = 1;
-    }
-    vkCmdPipelineBarrier(commandBuffer_, g_externalTextureStageMask, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    textureVK.OverrideVkImageLayout(VK_IMAGE_LAYOUT_GENERAL);
-}
-
 void VKCommandBuffer::SetResourceHeap(ResourceHeap& resourceHeap, std::uint32_t descriptorSet)
 {
     if (boundPipelineState_ == nullptr)
@@ -713,7 +645,16 @@ void VKCommandBuffer::SetResourceHeap(ResourceHeap& resourceHeap, std::uint32_t 
     if (!(descriptorSet < resourceHeapVK.GetVkDescriptorSets().size()))
         return /*Descriptor set out of bounds*/;
 
-    boundPipelineState_->BindHeapDescriptorSet(commandBuffer_, resourceHeapVK.GetVkDescriptorSets()[descriptorSet]);
+    VkDescriptorSet descriptorSetVK = resourceHeapVK.GetVkDescriptorSets()[descriptorSet];
+    if (boundPipelineState_->HasYcbcrVariants())
+    {
+        /* Heap descriptor set must be bound again with the layout of each Y'CbCr variant */
+        ycbcrHeapDescriptorSet_ = descriptorSetVK;
+        if (boundPipelineLayout_ != VK_NULL_HANDLE)
+            boundPipelineState_->BindHeapDescriptorSet(commandBuffer_, boundPipelineLayout_, descriptorSetVK);
+    }
+    else
+        boundPipelineState_->BindHeapDescriptorSet(commandBuffer_, boundPipelineLayout_, descriptorSetVK);
 
     if (boundPipelineBarrier_ != nullptr)
         resourceHeapVK.SetBarrierSlots(*boundPipelineBarrier_, descriptorSet);
@@ -727,8 +668,25 @@ void VKCommandBuffer::SetResource(std::uint32_t descriptor, Resource& resource)
     if (!(descriptor < boundBindingTable_->dynamicBindings.size()))
         return /*Out of bounds*/;
 
+    /* Ownership of external textures is transferred implicitly when this command buffer is submitted */
+    if (resource.GetResourceType() == ResourceType::Texture)
+    {
+        VKTexture& textureVK = LLGL_CAST(VKTexture&, resource);
+        if (textureVK.IsExternal())
+            TrackExternalTexture(textureVK);
+    }
+
+    /* Resources of PSOs with Y'CbCr variants are written once the variant is resolved; this may also switch the binding table */
+    bool writeDescriptor = true;
+    if (boundPipelineState_ != nullptr && boundPipelineState_->HasYcbcrVariants())
+        writeDescriptor = SetYcbcrPipelineResource(descriptor, resource);
+
     const VKLayoutBinding& binding = boundBindingTable_->dynamicBindings[descriptor];
-    descriptorCache_->EmplaceDescriptor(resource, binding, descriptorSetWriter_);
+    if (binding.descriptorType == VK_DESCRIPTOR_TYPE_MAX_ENUM)
+        return /*Virtual binding*/;
+
+    if (writeDescriptor)
+        descriptorCache_->EmplaceDescriptor(resource, binding, descriptorSetWriter_);
 
     /* Update pipeline barrier slot */
     if (boundPipelineBarrier_ != nullptr)
@@ -1028,9 +986,17 @@ void VKCommandBuffer::ClearAttachments(std::uint32_t numAttachments, const Attac
 
 void VKCommandBuffer::SetPipelineState(PipelineState& pipelineState)
 {
-    /* Bind native PSO */
     auto& pipelineStateVK = LLGL_CAST(VKPipelineState&, pipelineState);
-    pipelineStateVK.BindPipelineAndStaticDescriptorSet(commandBuffer_);
+
+    /* Bind native PSO; PSOs with Y'CbCr variants are bound once the texture of their combined texture-sampler is bound */
+    ResetYcbcrBindingStates();
+    if (pipelineStateVK.HasYcbcrVariants())
+        boundPipelineLayout_ = VK_NULL_HANDLE;
+    else
+    {
+        boundPipelineLayout_ = pipelineStateVK.GetVkPipelineLayout();
+        pipelineStateVK.BindPipelineAndStaticDescriptorSet(commandBuffer_, pipelineStateVK.GetVkPipeline(), boundPipelineLayout_);
+    }
 
     /* Handle special case for graphics PSOs */
     pipelineBindPoint_ = pipelineStateVK.GetBindPoint();
@@ -1053,7 +1019,13 @@ void VKCommandBuffer::SetPipelineState(PipelineState& pipelineState)
     /* Keep reference to bound piepline layout (can be null) */
     boundPipelineState_ = &pipelineStateVK;
 
-    if (pipelineStateVK.GetBindingTableAndDescriptorCache(boundBindingTable_, descriptorCache_))
+    if (pipelineStateVK.HasYcbcrVariants())
+    {
+        /* Binding table of the template layout has the same descriptor indices as its variants; the descriptor cache is selected with the variant */
+        boundBindingTable_  = &(pipelineStateVK.GetPipelineLayout()->GetBindingTable());
+        descriptorCache_    = nullptr;
+    }
+    else if (pipelineStateVK.GetBindingTableAndDescriptorCache(boundBindingTable_, descriptorCache_))
     {
         if (descriptorCache_ != nullptr)
         {
@@ -1083,8 +1055,18 @@ void VKCommandBuffer::SetStencilReference(std::uint32_t reference, const Stencil
 
 void VKCommandBuffer::SetUniforms(std::uint32_t first, const void* data, std::uint16_t dataSize)
 {
-    if (boundPipelineState_ != nullptr)
-        boundPipelineState_->PushConstants(commandBuffer_, first, static_cast<const char*>(data), dataSize);
+    if (boundPipelineState_ == nullptr)
+        return;
+
+    if (boundPipelineLayout_ == VK_NULL_HANDLE)
+    {
+        /* Push constants require a pipeline layout, so defer them until the Y'CbCr variant is resolved */
+        const YcbcrPendingUniforms pending{ first, static_cast<std::uint32_t>(ycbcrPendingUniformData_.size()), dataSize };
+        ycbcrPendingUniformData_.insert(ycbcrPendingUniformData_.end(), static_cast<const char*>(data), static_cast<const char*>(data) + dataSize);
+        ycbcrPendingUniforms_.push_back(pending);
+    }
+    else
+        boundPipelineState_->PushConstants(commandBuffer_, boundPipelineLayout_, first, static_cast<const char*>(data), dataSize);
 }
 
 /* ----- Queries ----- */
@@ -1228,72 +1210,72 @@ void VKCommandBuffer::EndStreamOutput()
 
 void VKCommandBuffer::Draw(std::uint32_t numVertices, std::uint32_t firstVertex)
 {
-    FlushDescriptorCache();
-    SubmitAutoPipelineBarrier();
+    if (!PrepareDrawOrDispatch())
+        return;
     vkCmdDraw(commandBuffer_, numVertices, 1, firstVertex, 0);
 }
 
 void VKCommandBuffer::DrawIndexed(std::uint32_t numIndices, std::uint32_t firstIndex)
 {
-    FlushDescriptorCache();
-    SubmitAutoPipelineBarrier();
+    if (!PrepareDrawOrDispatch())
+        return;
     vkCmdDrawIndexed(commandBuffer_, numIndices, 1, firstIndex, 0, 0);
 }
 
 void VKCommandBuffer::DrawIndexed(std::uint32_t numIndices, std::uint32_t firstIndex, std::int32_t vertexOffset)
 {
-    FlushDescriptorCache();
-    SubmitAutoPipelineBarrier();
+    if (!PrepareDrawOrDispatch())
+        return;
     vkCmdDrawIndexed(commandBuffer_, numIndices, 1, firstIndex, vertexOffset, 0);
 }
 
 void VKCommandBuffer::DrawInstanced(std::uint32_t numVertices, std::uint32_t firstVertex, std::uint32_t numInstances)
 {
-    FlushDescriptorCache();
-    SubmitAutoPipelineBarrier();
+    if (!PrepareDrawOrDispatch())
+        return;
     vkCmdDraw(commandBuffer_, numVertices, numInstances, firstVertex, 0);
 }
 
 void VKCommandBuffer::DrawInstanced(std::uint32_t numVertices, std::uint32_t firstVertex, std::uint32_t numInstances, std::uint32_t firstInstance)
 {
-    FlushDescriptorCache();
-    SubmitAutoPipelineBarrier();
+    if (!PrepareDrawOrDispatch())
+        return;
     vkCmdDraw(commandBuffer_, numVertices, numInstances, firstVertex, firstInstance);
 }
 
 void VKCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uint32_t numInstances, std::uint32_t firstIndex)
 {
-    FlushDescriptorCache();
-    SubmitAutoPipelineBarrier();
+    if (!PrepareDrawOrDispatch())
+        return;
     vkCmdDrawIndexed(commandBuffer_, numIndices, numInstances, firstIndex, 0, 0);
 }
 
 void VKCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uint32_t numInstances, std::uint32_t firstIndex, std::int32_t vertexOffset)
 {
-    FlushDescriptorCache();
-    SubmitAutoPipelineBarrier();
+    if (!PrepareDrawOrDispatch())
+        return;
     vkCmdDrawIndexed(commandBuffer_, numIndices, numInstances, firstIndex, vertexOffset, 0);
 }
 
 void VKCommandBuffer::DrawIndexedInstanced(std::uint32_t numIndices, std::uint32_t numInstances, std::uint32_t firstIndex, std::int32_t vertexOffset, std::uint32_t firstInstance)
 {
-    FlushDescriptorCache();
-    SubmitAutoPipelineBarrier();
+    if (!PrepareDrawOrDispatch())
+        return;
     vkCmdDrawIndexed(commandBuffer_, numIndices, numInstances, firstIndex, vertexOffset, firstInstance);
 }
 
 void VKCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset)
 {
-    FlushDescriptorCache();
-    SubmitAutoPipelineBarrier();
+    if (!PrepareDrawOrDispatch())
+        return;
     auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
     vkCmdDrawIndirect(commandBuffer_, bufferVK.GetVkBuffer(), offset, 1, 0);
 }
 
 void VKCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset, std::uint32_t numCommands, std::uint32_t stride)
 {
-    FlushDescriptorCache();
-    SubmitAutoPipelineBarrier();
+    if (!PrepareDrawOrDispatch())
+        return;
     auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
     if (maxDrawIndirectCount_ < numCommands)
     {
@@ -1312,16 +1294,16 @@ void VKCommandBuffer::DrawIndirect(Buffer& buffer, std::uint64_t offset, std::ui
 
 void VKCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset)
 {
-    FlushDescriptorCache();
-    SubmitAutoPipelineBarrier();
+    if (!PrepareDrawOrDispatch())
+        return;
     auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
     vkCmdDrawIndexedIndirect(commandBuffer_, bufferVK.GetVkBuffer(), offset, 1, 0);
 }
 
 void VKCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset, std::uint32_t numCommands, std::uint32_t stride)
 {
-    FlushDescriptorCache();
-    SubmitAutoPipelineBarrier();
+    if (!PrepareDrawOrDispatch())
+        return;
     auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
     if (maxDrawIndirectCount_ < numCommands)
     {
@@ -1341,8 +1323,8 @@ void VKCommandBuffer::DrawIndexedIndirect(Buffer& buffer, std::uint64_t offset, 
 void VKCommandBuffer::DrawStreamOutput()
 {
     LLGL_ASSERT_VK_EXT(EXT_transform_feedback);
-    FlushDescriptorCache();
-    SubmitAutoPipelineBarrier();
+    if (!PrepareDrawOrDispatch())
+        return;
     vkCmdDrawIndirectByteCountEXT(commandBuffer_, 1, 0, iaState_.ia0XfbCounterBuffer, iaState_.ia0XfbCounterBufferOffset, 0, iaState_.ia0VertexStride);
 }
 
@@ -1350,15 +1332,15 @@ void VKCommandBuffer::DrawStreamOutput()
 
 void VKCommandBuffer::Dispatch(std::uint32_t numWorkGroupsX, std::uint32_t numWorkGroupsY, std::uint32_t numWorkGroupsZ)
 {
-    FlushDescriptorCache();
-    SubmitAutoPipelineBarrier();
+    if (!PrepareDrawOrDispatch())
+        return;
     vkCmdDispatch(commandBuffer_, numWorkGroupsX, numWorkGroupsY, numWorkGroupsZ);
 }
 
 void VKCommandBuffer::DispatchIndirect(Buffer& buffer, std::uint64_t offset)
 {
-    FlushDescriptorCache();
-    SubmitAutoPipelineBarrier();
+    if (!PrepareDrawOrDispatch())
+        return;
     auto& bufferVK = LLGL_CAST(VKBuffer&, buffer);
     vkCmdDispatchIndirect(commandBuffer_, bufferVK.GetVkBuffer(), offset);
 }
@@ -1596,7 +1578,7 @@ void VKCommandBuffer::FlushDescriptorCache()
     if (descriptorCache_ != nullptr && descriptorCache_->IsInvalidated())
     {
         VkDescriptorSet descriptorSet = descriptorCache_->FlushDescriptorSet(*descriptorSetPool_, descriptorSetWriter_);
-        boundPipelineState_->BindDynamicDescriptorSet(commandBuffer_, descriptorSet);
+        boundPipelineState_->BindDynamicDescriptorSet(commandBuffer_, boundPipelineLayout_, descriptorSet);
     }
 }
 
@@ -1604,6 +1586,245 @@ void VKCommandBuffer::SubmitAutoPipelineBarrier()
 {
     if (boundPipelineBarrier_ != nullptr)
         boundPipelineBarrier_->Submit(commandBuffer_);
+}
+
+bool VKCommandBuffer::PrepareDrawOrDispatch()
+{
+    /* PSOs with Y'CbCr variants have no native pipeline until the texture of their combined texture-sampler is bound */
+    if (boundPipelineState_ != nullptr && boundPipelineLayout_ == VK_NULL_HANDLE)
+    {
+        Log::Errorf("cannot draw or dispatch with Vulkan PSO before a texture with Y'CbCr conversion has been bound to its combined texture-sampler\n");
+        return false;
+    }
+    FlushDescriptorCache();
+    SubmitAutoPipelineBarrier();
+    return true;
+}
+
+bool VKCommandBuffer::SetYcbcrPipelineResource(std::uint32_t descriptor, Resource& resource)
+{
+    const VKPipelineLayout* pipelineLayoutVK = boundPipelineState_->GetPipelineLayout();
+
+    /* The sampler is derived from the texture's conversion, so the sampler binding is only validated */
+    if (descriptor == pipelineLayoutVK->GetYcbcrSamplerDescriptor())
+    {
+        #ifdef LLGL_DEBUG
+        if (resource.GetResourceType() == ResourceType::Sampler && boundYcbcrVariant_ != nullptr)
+        {
+            VKSampler& samplerVK = LLGL_CAST(VKSampler&, resource);
+            if (samplerVK.GetYcbcrConversion() != boundYcbcrVariant_->conversion.get())
+                Log::Errorf("mismatch between Y'CbCr conversion of sampler and texture of combined texture-sampler\n");
+        }
+        #endif
+        return false;
+    }
+
+    RecordYcbcrBoundResource(descriptor, resource);
+
+    if (descriptor == pipelineLayoutVK->GetYcbcrTextureDescriptor())
+    {
+        if (resource.GetResourceType() != ResourceType::Texture)
+            return false;
+
+        const VKYcbcrConversionSPtr& conversion = LLGL_CAST(VKTexture&, resource).GetYcbcrConversionSPtr();
+        if (!conversion)
+        {
+            Log::Errorf("cannot bind texture without Y'CbCr conversion to combined texture-sampler with 'LLGL::BindFlags::SamplerYcbcrConversion'\n");
+            return false;
+        }
+
+        /* Switch pipeline variant if the conversion has changed; this writes all recorded resources including this texture */
+        if (boundYcbcrVariant_ == nullptr || boundYcbcrVariant_->conversion != conversion)
+        {
+            if (const VKYcbcrPipelineVariant* variant = boundPipelineState_->GetOrCreateYcbcrVariant(conversion))
+                BindYcbcrPipelineVariant(*variant);
+            return false;
+        }
+    }
+
+    /* Write resource to the descriptor cache of the current variant; otherwise, it is written once the variant is resolved */
+    return (boundYcbcrVariant_ != nullptr);
+}
+
+void VKCommandBuffer::BindYcbcrPipelineVariant(const VKYcbcrPipelineVariant& variant)
+{
+    /* Bind native pipeline of variant */
+    boundYcbcrVariant_      = &variant;
+    boundPipelineLayout_    = variant.layoutPermutation->GetVkPipelineLayout();
+    boundPipelineState_->BindPipelineAndStaticDescriptorSet(commandBuffer_, variant.pipeline.Get(), boundPipelineLayout_);
+
+    /* Switch to descriptor cache of variant; pending writes of the previous cache are discarded */
+    boundBindingTable_  = &(variant.layoutPermutation->GetBindingTable());
+    descriptorCache_    = variant.layoutPermutation->GetDescriptorCache();
+    LLGL_ASSERT_PTR(descriptorCache_);
+    descriptorCache_->Reset();
+    descriptorSetWriter_.Reset(descriptorCache_->GetNumDescriptors());
+
+    /* Bind heap descriptor set and push constants that were specified before the variant was resolved */
+    if (ycbcrHeapDescriptorSet_ != VK_NULL_HANDLE)
+        boundPipelineState_->BindHeapDescriptorSet(commandBuffer_, boundPipelineLayout_, ycbcrHeapDescriptorSet_);
+
+    for (const YcbcrPendingUniforms& pending : ycbcrPendingUniforms_)
+        boundPipelineState_->PushConstants(commandBuffer_, boundPipelineLayout_, pending.first, &(ycbcrPendingUniformData_[pending.offset]), pending.size);
+
+    ycbcrPendingUniforms_.clear();
+    ycbcrPendingUniformData_.clear();
+
+    /* Write all resources that were bound since SetPipelineState to the new descriptor cache */
+    for (const YcbcrBoundResource& boundResource : ycbcrBoundResources_)
+    {
+        const VKLayoutBinding& binding = boundBindingTable_->dynamicBindings[boundResource.descriptor];
+        if (binding.descriptorType != VK_DESCRIPTOR_TYPE_MAX_ENUM)
+            descriptorCache_->EmplaceDescriptor(*boundResource.resource, binding, descriptorSetWriter_);
+    }
+}
+
+void VKCommandBuffer::RecordYcbcrBoundResource(std::uint32_t descriptor, Resource& resource)
+{
+    for (YcbcrBoundResource& boundResource : ycbcrBoundResources_)
+    {
+        if (boundResource.descriptor == descriptor)
+        {
+            boundResource.resource = &resource;
+            return;
+        }
+    }
+    ycbcrBoundResources_.push_back(YcbcrBoundResource{ descriptor, &resource });
+}
+
+void VKCommandBuffer::ResetYcbcrBindingStates()
+{
+    boundYcbcrVariant_      = nullptr;
+    ycbcrHeapDescriptorSet_ = VK_NULL_HANDLE;
+    ycbcrBoundResources_.clear();
+    ycbcrPendingUniforms_.clear();
+    ycbcrPendingUniformData_.clear();
+}
+
+void VKCommandBuffer::TrackExternalTexture(VKTexture& textureVK)
+{
+    if (std::find(externalTextures_.begin(), externalTextures_.end(), &textureVK) == externalTextures_.end())
+        externalTextures_.push_back(&textureVK);
+}
+
+// Initializes an image barrier for a queue family ownership transfer of the specified external texture.
+static void InitExternalTextureBarrier(
+    VkImageMemoryBarrier&   barrier,
+    VKTexture&              textureVK,
+    VkAccessFlags           srcAccessMask,
+    VkAccessFlags           dstAccessMask,
+    VkImageLayout           oldLayout,
+    VkImageLayout           newLayout,
+    std::uint32_t           srcQueueFamilyIndex,
+    std::uint32_t           dstQueueFamilyIndex)
+{
+    barrier.sType                           = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.pNext                           = nullptr;
+    barrier.srcAccessMask                   = srcAccessMask;
+    barrier.dstAccessMask                   = dstAccessMask;
+    barrier.oldLayout                       = oldLayout;
+    barrier.newLayout                       = newLayout;
+    barrier.srcQueueFamilyIndex             = srcQueueFamilyIndex;
+    barrier.dstQueueFamilyIndex             = dstQueueFamilyIndex;
+    barrier.image                           = textureVK.GetVkImage();
+    barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel   = 0;
+    barrier.subresourceRange.levelCount     = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount     = 1;
+}
+
+void VKCommandBuffer::RecordExternalTextureReleaseBarriers()
+{
+    /* Release ownership to the external producer; this is always recorded outside of a render pass, since End() is called after EndRenderPass() */
+    SmallVector<VkImageMemoryBarrier, 4> barriers;
+    barriers.resize(externalTextures_.size());
+
+    for_range(i, externalTextures_.size())
+    {
+        InitExternalTextureBarrier(
+            barriers[i],
+            *externalTextures_[i],
+            VK_ACCESS_SHADER_READ_BIT,
+            0, // Ignored for release operations
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_IMAGE_LAYOUT_GENERAL,
+            queueGraphicsFamily_,
+            GetExternalQueueFamilyIndex()
+        );
+    }
+
+    vkCmdPipelineBarrier(
+        commandBuffer_,
+        g_externalTextureStageMask,
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        static_cast<std::uint32_t>(barriers.size()), barriers.data()
+    );
+}
+
+void VKCommandBuffer::RecordExternalTextureAcquirePrologue()
+{
+    /* Allocate prologue command buffer on demand; it shares the recording fence with the native command buffer of the same index */
+    VkCommandBuffer& prologue = prologueBufferArray_[commandBufferIndex_];
+    if (prologue == VK_NULL_HANDLE)
+    {
+        VkCommandBufferAllocateInfo allocInfo;
+        {
+            allocInfo.sType                 = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            allocInfo.pNext                 = nullptr;
+            allocInfo.commandPool           = commandPool_;
+            allocInfo.level                 = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            allocInfo.commandBufferCount    = 1;
+        }
+        VkResult result = vkAllocateCommandBuffers(device_, &allocInfo, &prologue);
+        VKThrowIfFailed(result, "failed to allocate Vulkan command buffer for external texture prologue");
+    }
+
+    VkCommandBufferBeginInfo beginInfo;
+    {
+        beginInfo.sType             = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.pNext             = nullptr;
+        beginInfo.flags             = (usageFlags_ & VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+        beginInfo.pInheritanceInfo  = nullptr;
+    }
+    VkResult result = vkBeginCommandBuffer(prologue, &beginInfo);
+    VKThrowIfFailed(result, "failed to begin Vulkan command buffer for external texture prologue");
+
+    /* Acquire ownership from the external producer; the old layout must not be UNDEFINED, since that would allow the implementation to discard the content */
+    SmallVector<VkImageMemoryBarrier, 4> barriers;
+    barriers.resize(externalTextures_.size());
+
+    for_range(i, externalTextures_.size())
+    {
+        InitExternalTextureBarrier(
+            barriers[i],
+            *externalTextures_[i],
+            0, // Ignored for acquire operations
+            VK_ACCESS_SHADER_READ_BIT,
+            VK_IMAGE_LAYOUT_GENERAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            GetExternalQueueFamilyIndex(),
+            queueGraphicsFamily_
+        );
+    }
+
+    vkCmdPipelineBarrier(
+        prologue,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        g_externalTextureStageMask,
+        0,
+        0, nullptr,
+        0, nullptr,
+        static_cast<std::uint32_t>(barriers.size()), barriers.data()
+    );
+
+    result = vkEndCommandBuffer(prologue);
+    VKThrowIfFailed(result, "failed to end Vulkan command buffer for external texture prologue");
+
+    prologueRecorded_[commandBufferIndex_] = true;
 }
 
 void VKCommandBuffer::AcquireNextBuffer()
@@ -1628,65 +1849,9 @@ void VKCommandBuffer::AcquireNextBuffer()
 
     stagingBufferPools_[commandBufferIndex_].Reset();
 
-    /* Semaphores of the previous submission of this native command buffer are no longer in use after its fence has been signaled */
-    waitSemaphoresArray_[commandBufferIndex_].clear();
-    pendingWaitSemaphores_.clear();
-    pendingWaitStageMasks_.clear();
-}
-
-void VKCommandBuffer::ImportWaitSemaphoreFromSyncFd(int syncFd)
-{
-    #if VK_KHR_external_semaphore_fd
-
-    if (HasExtension(VKExt::KHR_external_semaphore_fd))
-    {
-        /* Create binary semaphore and import sync file descriptor as temporary payload */
-        VKPtr<VkSemaphore> semaphore{ device_, vkDestroySemaphore };
-        VkSemaphoreCreateInfo createInfo;
-        {
-            createInfo.sType    = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-            createInfo.pNext    = nullptr;
-            createInfo.flags    = 0;
-        }
-        VkResult result = vkCreateSemaphore(device_, &createInfo, nullptr, semaphore.ReleaseAndGetAddressOf());
-        VKThrowIfFailed(result, "failed to create Vulkan semaphore for external fence");
-
-        VkImportSemaphoreFdInfoKHR importInfo;
-        {
-            importInfo.sType        = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR;
-            importInfo.pNext        = nullptr;
-            importInfo.semaphore    = semaphore.Get();
-            importInfo.flags        = VK_SEMAPHORE_IMPORT_TEMPORARY_BIT; // Required for sync file descriptors
-            importInfo.handleType   = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
-            importInfo.fd           = syncFd;
-        }
-        result = vkImportSemaphoreFdKHR(device_, &importInfo);
-
-        if (result == VK_SUCCESS)
-        {
-            /* Vulkan owns the file descriptor now */
-            pendingWaitSemaphores_.push_back(semaphore.Get());
-            pendingWaitStageMasks_.push_back(g_externalTextureStageMask);
-            waitSemaphoresArray_[commandBufferIndex_].push_back(std::move(semaphore));
-            return;
-        }
-    }
-
-    #endif // /VK_KHR_external_semaphore_fd
-
-    /* Fall back to waiting on the CPU if the sync file descriptor cannot be imported */
-    #if defined LLGL_OS_ANDROID || defined LLGL_OS_LINUX
-    struct pollfd pollFd;
-    {
-        pollFd.fd       = syncFd;
-        pollFd.events   = POLLIN;
-        pollFd.revents  = 0;
-    }
-    ::poll(&pollFd, 1, -1);
-    ::close(syncFd);
-    #else
-    (void)syncFd;
-    #endif
+    /* Prologue of this native command buffer is recorded again if external textures are bound */
+    prologueRecorded_[commandBufferIndex_] = false;
+    externalTextures_.clear();
 }
 
 std::uint32_t VKCommandBuffer::GetExternalQueueFamilyIndex() const
@@ -1704,7 +1869,9 @@ void VKCommandBuffer::ResetBindingStates()
     boundBindingTable_      = nullptr;
     boundPipelineState_     = nullptr;
     boundPipelineBarrier_   = nullptr;
+    boundPipelineLayout_    = VK_NULL_HANDLE;
     descriptorCache_        = nullptr;
+    ResetYcbcrBindingStates();
 }
 
 #if 0

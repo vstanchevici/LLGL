@@ -184,16 +184,6 @@ LLGL_C_EXPORT void llglResourceBarrier(uint32_t numBuffers, const LLGLBuffer* bu
     }
 }
 
-LLGL_C_EXPORT void llglAcquireExternalTexture(LLGLTexture texture, int64_t nativeFence)
-{
-    g_CurrentCmdBuf->AcquireExternalTexture(LLGL_REF(Texture, texture), static_cast<long long>(nativeFence));
-}
-
-LLGL_C_EXPORT void llglReleaseExternalTexture(LLGLTexture texture)
-{
-    g_CurrentCmdBuf->ReleaseExternalTexture(LLGL_REF(Texture, texture));
-}
-
 LLGL_C_EXPORT void llglBeginRenderPass(LLGLRenderTarget renderTarget)
 {
     g_CurrentCmdBuf->BeginRenderPass(LLGL_REF(RenderTarget, renderTarget));

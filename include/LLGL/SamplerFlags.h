@@ -132,7 +132,7 @@ enum class ChromaLocation
 /**
 \brief Y'CbCr sampler conversion descriptor structure.
 \remarks A texture that is sampled with a Y'CbCr conversion must be created with the same conversion descriptor as the sampler.
-Such a sampler can only be used as immutable sampler for a combined texture-sampler binding (see BindingDescriptor::immutableSampler).
+Such a texture must be bound to a combined texture-sampler whose sampler binding has BindFlags::SamplerYcbcrConversion.
 The conversion is performed by the hardware before the texel is returned to the shader, i.e. the shader receives RGB values.
 \remarks Use RenderSystem::QueryExternalImageProperties to query the conversion that is suggested by the driver for an external image.
 \remarks A conversion is only applied if its format is multi-planar (see IsMultiPlanarFormat) or its external format is non-zero.
@@ -263,13 +263,13 @@ struct LLGL_EXPORT SamplerDescriptor
 
     /**
     \brief Optional Y'CbCr sampler conversion. By default null.
-    \remarks If this is non-null, the sampler can only be used as immutable sampler for a combined texture-sampler binding
+    \remarks If this is non-null, the sampler can only be bound to a sampler binding with BindFlags::SamplerYcbcrConversion
     and the backend overrides the following attributes as required by the conversion:
     all address modes are SamplerAddressMode::Clamp, MIP-mapping and anisotropy are disabled, compare operations are disabled,
     and the min/mag filters equal YcbcrConversionDescriptor::chromaFilter unless the format supports separate reconstruction filters.
     \remarks The pointer is only read during the call to RenderSystem::CreateSampler.
     \note Only supported with: Vulkan, OpenGLES (external images only).
-    \see BindingDescriptor::immutableSampler
+    \see BindFlags::SamplerYcbcrConversion
     \see RenderingFeatures::hasSamplerYcbcrConversion
     */
     const YcbcrConversionDescriptor* ycbcrConversion = nullptr;

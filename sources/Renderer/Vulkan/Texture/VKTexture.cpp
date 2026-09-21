@@ -711,7 +711,7 @@ void VKTexture::CreateExternalImage(VkDevice device, const TextureDescriptor& de
 
     /*
     The content of the external image is owned by its producer (e.g. a video decoder) and is transferred from the foreign queue family
-    with oldLayout=GENERAL in each CommandBuffer::AcquireExternalTexture, so the layout is tracked as GENERAL from the beginning.
+    with oldLayout=GENERAL by the prologue of each command buffer that binds this texture (see VKCommandBuffer::RecordExternalTextureAcquirePrologue), so the layout is tracked as GENERAL from the beginning.
     VK_IMAGE_LAYOUT_UNDEFINED is not used here, because it permits the implementation to discard the content the producer wrote.
     Note that the native image starts out in VK_IMAGE_LAYOUT_UNDEFINED, so if a validation layer reports a layout mismatch
     for the first acquisition of an image, the first transition must use VK_IMAGE_LAYOUT_UNDEFINED instead.
